@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,
@@ -69,6 +69,9 @@ class WorkerThread;
 class PlotFrame;
 class PanelPlot;
 class PanelColorbox;
+class PlotFrame_WholeSeq;
+class PanelPlot_WholeSeq;
+class PanelColorbox_WholeSeq;
 
 enum
 {
@@ -83,7 +86,10 @@ enum
 	EVENT_CHECKBOX_SHIFT = wxID_HIGHEST + 7,
 	EVENT_BUTTON_PREVIEW = wxID_HIGHEST + 8,
 	EVENT_SLIDER_THR_SGN = wxID_HIGHEST + 9,
-	EVENT_SLIDER_THR_EFF = wxID_HIGHEST + 10
+	EVENT_SLIDER_THR_EFF = wxID_HIGHEST + 10,
+	EVENT_CHOSEN_QUANTITY = wxID_HIGHEST + 11,
+	EVENT_CHOSEN_PVALUEMODE = wxID_HIGHEST + 12,
+	EVENT_PREPARE_PREVIEW = wxID_HIGHEST + 13
 };
 
 class MainApp : public wxApp
@@ -115,7 +121,8 @@ private:
 	void loadOutputFolder(wxCommandEvent&);
 	void onSelectPathway(wxCommandEvent&);
 	void onSelectMode(wxCommandEvent&);
-	void onSelectShiftCheckbox (wxCommandEvent&);
+	void onSelectShiftCheckbox(wxCommandEvent&);
+	void onSelectPvalueMode(wxCommandEvent&);
 	void showInputControls(int);
 	void showPathsAll();
 	void showPathsEfficiency();
@@ -124,6 +131,7 @@ private:
 	void setNotReadyStatus();
 	int loadParameterTable();
 	void onDatasetClear(wxCommandEvent&);
+	void onPreparePreview(wxThreadEvent&);
 	void popupPreview(wxCommandEvent&);
 
 	bool		m_status_ready;
@@ -157,6 +165,7 @@ private:
 
 	wxRadioBox		*radiobox_selectpathway;
 	wxRadioBox		*radiobox_mode;
+	wxRadioBox		*radiobox_pvalue_mode;
 	wxButton		*button_runworker;
 	wxButton		*button_openmanyfiles;
 	wxButton		*button_outputfolder;
@@ -176,9 +185,11 @@ private:
 	wxSpinCtrlDouble	*spinner_thr_efficiency;
 
 	wxCheckBox		*checkbox_source_leakage;
+	wxCheckBox		*checkbox_avoid_overlapping;
 	wxCheckBox		*checkbox_save_cdiagrams;
 	wxCheckBox		*checkbox_save_pdiagrams;
 	wxCheckBox		*checkbox_save_efficiencies;
+	wxCheckBox		*checkbox_save_wholeseq_xcorr;
 	wxCheckBox		*checkbox_parallel_omp;
 
 	wxTextCtrl		*textctrl_save_prefix;
@@ -226,10 +237,13 @@ public:
 	double	parameter_samplingperiod;
 	double	parameter_thr_significance;
 	double	parameter_thr_efficiency;
+	bool	parameter_pvalue_by_surrogate;
 	bool	parameter_use_shift;
+	bool	parameter_overlapping_windows;
 	bool	parameter_print_cdiagrams;
 	bool	parameter_print_pdiagrams;
 	bool	parameter_print_efficiencies;
+	bool	parameter_print_wholeseq_xcorr;
 
 	bool	parameter_use_parallel;
 	int	parameter_numthreads;
@@ -237,10 +251,13 @@ public:
 	std::vector < std::vector <double> >			sequences;
 	std::vector < std::vector < std::vector <double> > >	diagrams_correlation;
 	std::vector < std::vector < std::vector <double> > >	diagrams_pvalue;
+	std::vector < std::vector < std::vector <double> > >	diagrams_pvalue_fisher;
 	std::vector < std::vector <double> >			efficiencies;
 	std::vector <double>					window_widths;
 	std::vector <std::string>				node_labels;
 	std::vector <PairOfLabels>				node_pairs;
+	std::vector < std::vector <double> >			wholeseq_xcorr;
+	std::vector < std::vector <double> >			wholeseq_pvalue;
 
 	std::vector < std::vector < std::vector <double> > >			matrices_multieta;
 	std::vector < std::vector < std::vector <double> > >			efficiencies_multialpha;
@@ -257,7 +274,7 @@ public:
 	WorkerThread(GuiFrame *frame);
 
 	virtual void *Entry();
-	virtual void workerExit();
+	virtual void OnExit();
 
 	ContainerWorkspace	*data_container;
 	GuiFrame		*parent_frame;
@@ -306,6 +323,50 @@ public:
 
 private:
 	PlotFrame		*parent_frame;
+
+	wxDECLARE_EVENT_TABLE();
+};
+
+
+class PlotFrame_WholeSeq : public wxFrame
+{
+public:
+	PlotFrame_WholeSeq(const wxString&, GuiFrame *);
+	void OnSelectQuantity(wxCommandEvent&);
+
+	ContainerWorkspace	*results_workspace;
+	wxRadioBox		*radiobox_xcorr_pvalue;
+
+private:
+	PanelPlot_WholeSeq		*plot_area;
+	PanelColorbox_WholeSeq		*colorbox_area;
+
+	wxDECLARE_EVENT_TABLE();
+};
+
+class PanelPlot_WholeSeq : public wxPanel
+{
+public:
+	PanelPlot_WholeSeq(PlotFrame_WholeSeq *, wxSize);
+	void OnPaint(wxPaintEvent&);
+	void OnResize(wxSizeEvent&);
+
+private:
+	PlotFrame_WholeSeq	*parent_frame;
+	ContainerWorkspace	*results_workspace;
+
+	wxDECLARE_EVENT_TABLE();
+};
+
+class PanelColorbox_WholeSeq : public wxPanel
+{
+public:
+	PanelColorbox_WholeSeq(PlotFrame_WholeSeq *, wxSize);
+	void OnPaint(wxPaintEvent&);
+	void OnResize(wxSizeEvent&);
+
+private:
+	PlotFrame_WholeSeq	*parent_frame;
 
 	wxDECLARE_EVENT_TABLE();
 };

@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,
@@ -50,7 +50,7 @@
 #endif
 
 void netOnZeroDXC_xc_help (char *);
-int netOnZeroDXC_xc_parse_options (int, char **, bool &, bool &, bool &, bool &, bool &, int &, int &, int &, int &, int &, int &, std::string &, std::string &, char &);
+int netOnZeroDXC_xc_parse_options (int, char **, bool &, bool &, bool &, bool &, bool &, bool &, bool &, int &, int &, int &, int &, int &, int &, std::string &, std::string &, char &);
 int netOnZeroDXC_xc_check_sequences (const std::vector < std::vector <double> > &, int, int, int, int &, int);
 
 int main(int argc, char *argv[]) {
@@ -59,6 +59,8 @@ int main(int argc, char *argv[]) {
 	bool	write_to_file = false;
 	bool	print_corr_diagram = false;
 	bool	compute_pvalue_diagram = false;
+	bool	use_surrogate_generation = true;
+	bool	compute_wholesequence_xcorr = false;
 	bool	enable_parallel_computing = false;
 	int	index_a = -1, index_b = -1;
 	int	apply_tau = -1;
@@ -68,8 +70,10 @@ int main(int argc, char *argv[]) {
 	std::string	selected_output_filename;
 
 	int error;
-	error = netOnZeroDXC_xc_parse_options (argc, argv, read_from_file, write_to_file, print_corr_diagram, compute_pvalue_diagram, enable_parallel_computing, index_a, index_b,
-					apply_tau, nr_window_widths, window_basewidth, nr_surrogates, selected_input_filename, selected_output_filename, separator_char);
+	error = netOnZeroDXC_xc_parse_options (argc, argv, read_from_file, write_to_file, print_corr_diagram, compute_pvalue_diagram, use_surrogate_generation,
+						compute_wholesequence_xcorr, enable_parallel_computing, index_a, index_b,
+						apply_tau, nr_window_widths, window_basewidth, nr_surrogates,
+						selected_input_filename, selected_output_filename, separator_char);
 	if (error)
 		exit(1);
 
@@ -100,35 +104,115 @@ int main(int argc, char *argv[]) {
 		std::cerr << "ERROR: inconsistent sequences sizes found, or only one sequence detected.\n";
 		exit(1);
 	}
-        error = netOnZeroDXC_xc_check_sequences(loaded_sequences, index_a, index_b, nr_window_widths, window_basewidth, apply_tau);
-	if (error)
-		exit(1);
-	index_a--;
-	index_b--;
+	if (!compute_wholesequence_xcorr) {
+	        error = netOnZeroDXC_xc_check_sequences(loaded_sequences, index_a, index_b, nr_window_widths, window_basewidth, apply_tau);
+		if (error)
+			exit(1);
+		index_a--;
+		index_b--;
+		std::vector <double>	dummy_vector;
+		int	k;
+		if (apply_tau > 0) {
+			for (k = nr_window_widths*window_basewidth / 2 - 1; k < loaded_sequences[index_a].size() - nr_window_widths*window_basewidth / 2 - apply_tau; k = k + window_basewidth)
+				dummy_vector.push_back(0);
+		} else {
+			for (k = nr_window_widths*window_basewidth / 2 - 1; k < loaded_sequences[index_a].size() - nr_window_widths*window_basewidth / 2; k = k + window_basewidth)
+				dummy_vector.push_back(0);
+		}
+		std::vector < std::vector <double> >	correlation_diagram_data(nr_window_widths, dummy_vector);
+		std::vector < std::vector <double> >	p_value_diagram(nr_window_widths, dummy_vector);
+		std::vector < std::vector <double> >	p_value_diagram_fisher(nr_window_widths, dummy_vector);
 
-	std::vector <double>	dummy_vector;
-	int	k;
-	if (apply_tau > 0) {
-		for (k = nr_window_widths*window_basewidth / 2 - 1; k < loaded_sequences[index_a].size() - nr_window_widths*window_basewidth / 2 - apply_tau; k = k + window_basewidth)
-			dummy_vector.push_back(0);
-	} else {
-		for (k = nr_window_widths*window_basewidth / 2 - 1; k < loaded_sequences[index_a].size() - nr_window_widths*window_basewidth / 2; k = k + window_basewidth)
-			dummy_vector.push_back(0);
-	}
-	std::vector < std::vector <double> >	correlation_diagram_data(nr_window_widths, dummy_vector);
-	std::vector < std::vector <double> >	p_value_diagram(nr_window_widths, dummy_vector);
+		netOnZeroDXC_compute_cdiagram(correlation_diagram_data, p_value_diagram_fisher, loaded_sequences, index_a, index_b, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
 
-	netOnZeroDXC_compute_cdiagram(correlation_diagram_data, loaded_sequences, index_a, index_b, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
+		if (print_corr_diagram) {
+			if (write_to_file) {
+				error = netOnZeroDXC_save_single_file(correlation_diagram_data, selected_output_filename, separator_char);
+			} else {
+				int	l;
+				for (l = 0; l < nr_window_widths; l++) {
+					std::cout << correlation_diagram_data[l][0];
+					for (k = 1; k < correlation_diagram_data[l].size(); k++) {
+						std::cout << separator_char << correlation_diagram_data[l][k];
+					}
+					std::cout << "\n";
+				}
+			}
+			if (error) {
+				std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
+				exit(1);
+			}
+			exit(0);
+		}
 
-	if (print_corr_diagram) {
+		if (use_surrogate_generation) {
+
+			std::vector <double>		values_distribution_a, values_distribution_b;
+			std::vector <double>		fft_amplitudes_a, fft_amplitudes_b;
+
+			netOnZeroDXC_initialize_surrogate_generation(values_distribution_a, fft_amplitudes_a, loaded_sequences, index_a);
+			netOnZeroDXC_initialize_surrogate_generation(values_distribution_b, fft_amplitudes_b, loaded_sequences, index_b);
+
+			unsigned int	seed = (unsigned int) clock();
+			if (enable_parallel_computing) {
+				#pragma omp parallel for schedule(dynamic)
+				for (int i = 0; i < nr_surrogates; i++) {
+					std::vector < std::vector <double> >	correlation_diagram_surrogates(nr_window_widths, dummy_vector);
+					std::vector <double>			temp_surrogate_sequence_a;
+					std::vector <double>			temp_surrogate_sequence_b;
+					std::vector < std::vector <double> >	surrogates_container;
+					surrogates_container.clear();
+					temp_surrogate_sequence_a.clear();
+					temp_surrogate_sequence_b.clear();
+					seed = seed + 2*i;
+					netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, index_a, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
+					seed++;
+					netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, index_b, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
+					surrogates_container.push_back(temp_surrogate_sequence_a);
+					surrogates_container.push_back(temp_surrogate_sequence_b);
+					netOnZeroDXC_compute_cdiagram(correlation_diagram_surrogates, p_value_diagram_fisher, surrogates_container, 0, 1, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
+					#pragma omp critical
+					{
+						netOnZeroDXC_update_pdiagram (p_value_diagram, correlation_diagram_data, correlation_diagram_surrogates, nr_window_widths, nr_surrogates);
+					}
+				}
+			} else {
+				int	i;
+				for (i = 0; i < nr_surrogates; i++) {
+					std::vector < std::vector <double> >	correlation_diagram_surrogates(nr_window_widths, dummy_vector);
+					std::vector <double>		temp_surrogate_sequence_a;
+					std::vector <double>		temp_surrogate_sequence_b;
+					std::vector < std::vector <double> >	surrogates_container;
+					surrogates_container.clear();
+					temp_surrogate_sequence_a.clear();
+					temp_surrogate_sequence_b.clear();
+					netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, index_a, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
+					seed++;
+					netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, index_b, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
+					seed++;
+					surrogates_container.push_back(temp_surrogate_sequence_a);
+					surrogates_container.push_back(temp_surrogate_sequence_b);
+					netOnZeroDXC_compute_cdiagram(correlation_diagram_surrogates, p_value_diagram_fisher, surrogates_container, 0, 1, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
+					netOnZeroDXC_update_pdiagram (p_value_diagram, correlation_diagram_data, correlation_diagram_surrogates, nr_window_widths, nr_surrogates);
+				}
+			}
+		} else if (!use_surrogate_generation) {
+			int	l;
+			for (l = 0; l < p_value_diagram_fisher.size(); l++) {
+				for (k = 0; k < p_value_diagram_fisher[l].size(); k++) {
+					p_value_diagram[l][k] = p_value_diagram_fisher[l][k];
+				}
+			}
+		}
+
 		if (write_to_file) {
-			error = netOnZeroDXC_save_single_file(correlation_diagram_data, selected_output_filename, separator_char);
+			error = netOnZeroDXC_save_single_file(p_value_diagram, selected_output_filename, separator_char);
 		} else {
 			int	l;
 			for (l = 0; l < nr_window_widths; l++) {
-				std::cout << correlation_diagram_data[l][0];
-				for (k = 1; k < correlation_diagram_data[l].size(); k++) {
-					std::cout << separator_char << correlation_diagram_data[l][k];
+				std::cout << p_value_diagram[l][0];
+				for (k = 1; k < p_value_diagram[l].size(); k++) {
+					std::cout << separator_char << p_value_diagram[l][k];
 				}
 				std::cout << "\n";
 			}
@@ -137,74 +221,132 @@ int main(int argc, char *argv[]) {
 			std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
 			exit(1);
 		}
-		exit(0);
-	}
-
-	std::vector <double>		values_distribution_a, values_distribution_b;
-	std::vector <double>		fft_amplitudes_a, fft_amplitudes_b;
-
-	netOnZeroDXC_initialize_surrogate_generation(values_distribution_a, fft_amplitudes_a, loaded_sequences, index_a);
-	netOnZeroDXC_initialize_surrogate_generation(values_distribution_b, fft_amplitudes_b, loaded_sequences, index_b);
-
-	unsigned int	seed = (unsigned int) clock();
-	if (enable_parallel_computing) {
-		#pragma omp parallel for schedule(dynamic)
-		for (int i = 0; i < nr_surrogates; i++) {
-			std::vector < std::vector <double> >	correlation_diagram_surrogates(nr_window_widths, dummy_vector);
-			std::vector <double>		temp_surrogate_sequence_a;
-			std::vector <double>		temp_surrogate_sequence_b;
-			std::vector < std::vector <double> >	surrogates_container;
-			surrogates_container.clear();
-			temp_surrogate_sequence_a.clear();
-			temp_surrogate_sequence_b.clear();
-			seed = seed + 2*i;
-			netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, index_a, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
-			seed++;
-			netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, index_b, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
-			surrogates_container.push_back(temp_surrogate_sequence_a);
-			surrogates_container.push_back(temp_surrogate_sequence_b);
-			netOnZeroDXC_compute_cdiagram(correlation_diagram_surrogates, surrogates_container, 0, 1, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
-			#pragma omp critical
-			{
-				netOnZeroDXC_update_pdiagram (p_value_diagram, correlation_diagram_data, correlation_diagram_surrogates, nr_window_widths, nr_surrogates);
+	} else if (compute_wholesequence_xcorr) {
+		std::vector <double>	dummy_vector(loaded_sequences.size(), 0.0);
+		std::vector < std::vector <double> >	correlation_matrix_wholeseq(loaded_sequences.size(), dummy_vector);
+		int	i, j;
+		int	error = 0;
+		for (i = 0; i < loaded_sequences.size() - 1; i++) {
+			correlation_matrix_wholeseq[i][i] = 1.0;
+			for (j = i + 1; j < loaded_sequences.size(); j++) {
+				correlation_matrix_wholeseq[i][j] = netOnZeroDXC_compute_wholeseq_crosscorr(loaded_sequences, i, j, (apply_tau > 0)? true : false, apply_tau);
+				correlation_matrix_wholeseq[j][i] = correlation_matrix_wholeseq[i][j];
 			}
 		}
-	} else {
-		int	i;
-		for (i = 0; i < nr_surrogates; i++) {
-			std::vector < std::vector <double> >	correlation_diagram_surrogates(nr_window_widths, dummy_vector);
-			std::vector <double>		temp_surrogate_sequence_a;
-			std::vector <double>		temp_surrogate_sequence_b;
-			std::vector < std::vector <double> >	surrogates_container;
-			surrogates_container.clear();
-			temp_surrogate_sequence_a.clear();
-			temp_surrogate_sequence_b.clear();
-			netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, index_a, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
-			seed++;
-			netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, index_b, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
-			seed++;
-			surrogates_container.push_back(temp_surrogate_sequence_a);
-			surrogates_container.push_back(temp_surrogate_sequence_b);
-			netOnZeroDXC_compute_cdiagram(correlation_diagram_surrogates, surrogates_container, 0, 1, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
-			netOnZeroDXC_update_pdiagram (p_value_diagram, correlation_diagram_data, correlation_diagram_surrogates, nr_window_widths, nr_surrogates);
-		}
-	}
+		correlation_matrix_wholeseq[i][i] = 1.0;
 
-	if (write_to_file) {
-		error = netOnZeroDXC_save_single_file(p_value_diagram, selected_output_filename, separator_char);
-	} else {
-		int	l;
-		for (l = 0; l < nr_window_widths; l++) {
-			std::cout << p_value_diagram[l][0];
-			for (k = 1; k < p_value_diagram[l].size(); k++) {
-				std::cout << separator_char << p_value_diagram[l][k];
+		if (print_corr_diagram) {
+			if (write_to_file) {
+				error = netOnZeroDXC_save_single_file(correlation_matrix_wholeseq, selected_output_filename, separator_char);
+			} else {
+				for (i = 0; i < correlation_matrix_wholeseq.size(); i++) {
+					std::cout << correlation_matrix_wholeseq[i][0];
+					for (j = 1; j < correlation_matrix_wholeseq[i].size(); j++) {
+						std::cout << separator_char << correlation_matrix_wholeseq[i][j];
+					}
+					std::cout << "\n";
+				}
 			}
-			std::cout << "\n";
+			if (error) {
+				std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
+				exit(1);
+			}
+			exit(0);
 		}
-	}
-	if (error) {
-		std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
-		exit(1);
+
+		std::vector < std::vector <double> >	p_value_matrix_wholeseq(loaded_sequences.size(), dummy_vector);
+
+		if (use_surrogate_generation) {
+			std::vector <double>		values_distribution_a, values_distribution_b;
+			std::vector <double>		fft_amplitudes_a, fft_amplitudes_b;
+
+			for (i = 0; i < loaded_sequences.size() - 1; i++) {
+				p_value_matrix_wholeseq[i][i] = 0.0;
+				for (j = i + 1; j < loaded_sequences.size(); j++) {
+
+					netOnZeroDXC_initialize_surrogate_generation(values_distribution_a, fft_amplitudes_a, loaded_sequences, i);
+					netOnZeroDXC_initialize_surrogate_generation(values_distribution_b, fft_amplitudes_b, loaded_sequences, j);
+
+					unsigned int	seed = (unsigned int) clock();
+					if (enable_parallel_computing) {
+						#pragma omp parallel for schedule(dynamic)
+						for (int s = 0; s < nr_surrogates; s++) {
+							std::vector <double>		temp_surrogate_sequence_a;
+							std::vector <double>		temp_surrogate_sequence_b;
+							std::vector < std::vector <double> >	surrogates_container;
+							double	surrogate_xcorr_coefficient = 0.0;
+							surrogates_container.clear();
+							temp_surrogate_sequence_a.clear();
+							temp_surrogate_sequence_b.clear();
+							seed = seed + 2*s;
+							netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, i, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
+							seed++;
+							netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, j, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
+							surrogates_container.push_back(temp_surrogate_sequence_a);
+							surrogates_container.push_back(temp_surrogate_sequence_b);
+							surrogate_xcorr_coefficient = netOnZeroDXC_compute_wholeseq_crosscorr(surrogates_container, 0, 1, (apply_tau > 0)? true : false, apply_tau);
+							#pragma omp critical
+							{
+								if (surrogate_xcorr_coefficient > correlation_matrix_wholeseq[i][j]) {
+									p_value_matrix_wholeseq[i][j] += 1.0 / ((double) nr_surrogates);
+								}
+							}
+						}
+					} else {
+						int	s;
+						double	surrogate_xcorr_coefficient;
+						for (s = 0; s < nr_surrogates; s++) {
+							std::vector <double>		temp_surrogate_sequence_a;
+							std::vector <double>		temp_surrogate_sequence_b;
+							std::vector < std::vector <double> >	surrogates_container;
+							surrogates_container.clear();
+							temp_surrogate_sequence_a.clear();
+							temp_surrogate_sequence_b.clear();
+							netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_a, loaded_sequences, i, values_distribution_a, fft_amplitudes_a, TOLERANCE_SURROGATES, seed);
+							seed++;
+							netOnZeroDXC_generate_surrogate_sequence(temp_surrogate_sequence_b, loaded_sequences, j, values_distribution_b, fft_amplitudes_b, TOLERANCE_SURROGATES, seed);
+							seed++;
+							surrogates_container.push_back(temp_surrogate_sequence_a);
+							surrogates_container.push_back(temp_surrogate_sequence_b);
+							surrogate_xcorr_coefficient = netOnZeroDXC_compute_wholeseq_crosscorr(surrogates_container, 0, 1, (apply_tau > 0)? true : false, apply_tau);
+							if (surrogate_xcorr_coefficient > correlation_matrix_wholeseq[i][j]) {
+								p_value_matrix_wholeseq[i][j] += 1.0 / ((double) nr_surrogates);
+							}
+						}
+					}
+					p_value_matrix_wholeseq[j][i] = p_value_matrix_wholeseq[i][j];
+				}
+			}
+		} else if (!use_surrogate_generation) {
+			int	i, j;
+			double	temp_cc2, temp_n, f_statistics;
+			for (i = 0; i < correlation_matrix_wholeseq.size() - 1; i++) {
+				for (j = i + 1; j < correlation_matrix_wholeseq[i].size(); j++) {
+					temp_cc2 = correlation_matrix_wholeseq[i][j]*correlation_matrix_wholeseq[i][j];
+					temp_n = (double) (loaded_sequences[0].size() - ((apply_tau > 0)? apply_tau : 0));
+					f_statistics = 1.0 / (1.0/temp_cc2 - 1.0);
+					f_statistics *= temp_n;
+					p_value_matrix_wholeseq[i][j] = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1, temp_n - 2);
+					p_value_matrix_wholeseq[j][i] = p_value_matrix_wholeseq[i][j];
+				}
+			}
+		}
+
+		if (write_to_file) {
+			error = netOnZeroDXC_save_single_file(p_value_matrix_wholeseq, selected_output_filename, separator_char);
+		} else {
+			for (i = 0; i < p_value_matrix_wholeseq.size(); i++) {
+				std::cout << p_value_matrix_wholeseq[i][0];
+				for (j = 1; j < p_value_matrix_wholeseq[i].size(); j++) {
+					std::cout << separator_char << p_value_matrix_wholeseq[i][j];
+				}
+				std::cout << "\n";
+			}
+		}
+		if (error) {
+			std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
+			exit(1);
+		}
 	}
 
 	return 0;
@@ -214,7 +356,7 @@ void netOnZeroDXC_xc_help (char *program_name)
 {
 	std::cerr << "Usage:\n";
 	std::cerr << "\t" << program_name << " -n <#> <#> -W <#> -L <#> (<Options>)\t<\t<vector stream>\n";
-	std::cerr << "\nMandatory assignment:\n";
+	std::cerr << "\nMandatory assignment (standard computation):\n";
 	std::cerr << "\t-n <#> <#>\tset column numbers of the two sequences to be analyzed;\n";
 	std::cerr << "\t-W <#>\t\tset the number of window widths (rows of a correlation diagram);\n";
 	std::cerr << "\t-L <#>\t\tset the base window width (in number of samples; if odd, will be reduced by 1).\n";
@@ -224,7 +366,11 @@ void netOnZeroDXC_xc_help (char *program_name)
 	std::cerr << "\t-p\t\tcompute p value diagram by surrogate generation (default);\n";
 	std::cerr << "\t-M <#>\t\tset the number of surrogates to be generated (default = 100);\n";
 	std::cerr << "\t-tau <#>\tapply the delay of +/-tau points to assess zero-delay cross-correlation as the average of two delayed cross-correlations;\n";
-	std::cerr << "\t-parallel\tenable parallel computing.\n";
+	std::cerr << "\t-Ftest\t\tcompute p values by means of a regression-based F-test, instead of the default surrogate-based evaluation;\n";
+	std::cerr << "\t-parallel\tenable parallel computing;\n";
+	std::cerr << "\t-whole-seq\tcompute cross correlations (and corresponding p values) between the whole sequences, for all pairs.\n";
+	std::cerr << "\t\t\t\tIn this case, mandatory assigments are not required and are ignored.\n";
+	std::cerr << "\t\t\t\tFlags -C and -p correspond to computing correlation coefficients only or p values, respectively.\n";
 
 	std::cerr << "\nInput/output:\n";
 	std::cerr << "\t-i <fname>\tread from file 'fname' instead of standard input;\n";
@@ -235,8 +381,9 @@ void netOnZeroDXC_xc_help (char *program_name)
 }
 
 int netOnZeroDXC_xc_parse_options (int argc, char *argv[], bool & read_from_file, bool & write_to_file, bool & print_corr_diagram, bool & compute_pvalue_diagram,
-				bool & enable_parallel_computing, int & index_a, int & index_b, int & tau, int & W, int & L, int & M, std::string & input_filename,
-				std::string & output_filename, char & separator_char)
+				bool & use_surrogate_generation, bool & compute_wholesequence_xcorr, bool & enable_parallel_computing,
+				int & index_a, int & index_b, int & tau, int & W, int & L, int & M,
+				std::string & input_filename, std::string & output_filename, char & separator_char)
 {
 	int	n = 1;
 	while (n < argc) {
@@ -279,6 +426,12 @@ int netOnZeroDXC_xc_parse_options (int argc, char *argv[], bool & read_from_file
 			n++;
 			tau = atoi(argv[n]);
 
+		} else if( strcmp( argv[n], "-Ftest" ) == 0 ) {
+			use_surrogate_generation = false;
+
+		} else if( strcmp( argv[n], "-whole-seq" ) == 0 ) {
+			compute_wholesequence_xcorr = true;
+
 		} else if ((strcmp("-h", argv[n]) == 0) || (strcmp("--help", argv[n]) == 0))  {
 			netOnZeroDXC_xc_help(argv[0]);
 			exit(0);
@@ -291,15 +444,15 @@ int netOnZeroDXC_xc_parse_options (int argc, char *argv[], bool & read_from_file
 	else if (compute_pvalue_diagram && print_corr_diagram)
 		print_corr_diagram = false;
 
-	if ((index_a <= 0) || (index_b <= 0)) {
+	if ((!compute_wholesequence_xcorr) && ((index_a <= 0) || (index_b <= 0))) {
 		std::cerr << "ERROR: column numbers were not correctly set. Use " << argv[0] << " -h for a list of options.\n";
 		return 1;
 	}
-	if (W <= 0) {
+	if ((!compute_wholesequence_xcorr) && (W <= 0)) {
 		std::cerr << "ERROR: number of window widths was not correctly set. Use " << argv[0] << " -h for a list of options.\n";
 		return 1;
 	}
-	if (L <= 0) {
+	if ((!compute_wholesequence_xcorr) && (L <= 0)) {
 		std::cerr << "ERROR: base width was not correctly set. Use " << argv[0] << " -h for a list of options.\n";
 		return 1;
 	}

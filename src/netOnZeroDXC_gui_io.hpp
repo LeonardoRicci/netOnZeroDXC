@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,

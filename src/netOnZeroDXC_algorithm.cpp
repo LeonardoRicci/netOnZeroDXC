@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,
@@ -33,9 +33,11 @@
 #include <ctime>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <iostream>
 
 #include "omp.h"
 
@@ -66,39 +68,56 @@ double netOnZeroDXC_compute_wmatrix_element (const std::vector <double> & effici
 	return -1.0;
 }
 
-int netOnZeroDXC_compute_efficiency (std::vector <double> & efficiency, const std::vector < std::vector <double> > & diagram, double threshold_alpha)
+int netOnZeroDXC_compute_efficiency (std::vector <double> & efficiency, const std::vector < std::vector <double> > & diagram, double threshold_alpha, bool avoid_overlapping)
 {
 	efficiency.clear();
 
 	int	i, j, n;
 	double	eta;
-	for (i = 0; i < diagram.size(); i++) {
-		eta = 0.0;
-		n = 0;
-		for (j = 0; j < diagram[i].size(); j++) {
-			if (diagram[i][j] < threshold_alpha)
-				eta += 1.0;
-			n++;
+
+	if (!avoid_overlapping) {
+		for (i = 0; i < diagram.size(); i++) {
+			eta = 0.0;
+			n = 0;
+			for (j = 0; j < diagram[i].size(); j++) {
+				if (diagram[i][j] < threshold_alpha)
+					eta += 1.0;
+				n++;
+			}
+			efficiency.push_back(eta / (double) n);
 		}
-		efficiency.push_back(eta / (double) n);
+	} else if (avoid_overlapping) {
+		for (i = 0; i < diagram.size(); i++) {
+			eta = 0.0;
+			n = 0;
+			for (j = 0; j < diagram[i].size(); j += (i + 1)) {
+				if (diagram[i][j] < threshold_alpha)
+					eta += 1.0;
+				n++;
+			}
+			efficiency.push_back(eta / (double) n);
+		}
 	}
 
 	return 0;
 }
 
-int netOnZeroDXC_compute_cdiagram (std::vector < std::vector <double> > & correlation_diagram, const std::vector < std::vector <double> > & sequences,
-				int node_a, int node_b, int w_base, int W, bool apply_shift, int shift)
+int netOnZeroDXC_compute_cdiagram (std::vector < std::vector <double> > & correlation_diagram, std::vector < std::vector <double> > & pvalue_diagram_fisher,
+					const std::vector < std::vector <double> > & sequences, int node_a, int node_b, int w_base, int W, bool apply_shift, int shift)
 {
 	int	l, j, k, ws;
-	double	temp;
+	double	cross_correlation_coefficient, f_statistics;
 	if (apply_shift) {
 		for (l = 0; l < W; l++) {
 			j = 0;
 			ws = (l + 1) * w_base;
 			for (k = W * w_base / 2 - 1; k < sequences[node_a].size() - W * w_base / 2 - shift; k = k + w_base) {
-				temp = 0.5 * netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k + shift - ws/2 + 1, k + shift + ws/2, k - ws/2 + 1, k + ws/2);
-				temp += 0.5 * netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k - ws/2 + 1, k + ws/2, k + shift - ws/2 + 1, k + shift + ws/2);
-				correlation_diagram[l][j] = temp;
+				cross_correlation_coefficient = 0.5 * netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k + shift - ws/2 + 1, k + shift + ws/2, k - ws/2 + 1, k + ws/2);
+				cross_correlation_coefficient += 0.5 * netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k - ws/2 + 1, k + ws/2, k + shift - ws/2 + 1, k + shift + ws/2);
+				correlation_diagram[l][j] = cross_correlation_coefficient;
+				f_statistics = ((double) ws) / (1.0/(cross_correlation_coefficient*cross_correlation_coefficient) - 1.0);
+				pvalue_diagram_fisher[l][j] = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1.0, ws - 2.0);
+
 				j++;
 			}
 		}
@@ -107,7 +126,11 @@ int netOnZeroDXC_compute_cdiagram (std::vector < std::vector <double> > & correl
 			j = 0;
 			ws = (l + 1) * w_base;
 			for (k = W * w_base / 2 - 1; k < sequences[node_a].size() - W * w_base / 2; k = k + w_base) {
-				correlation_diagram[l][j] = netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k - ws/2 + 1, k + ws/2, k - ws/2 + 1, k + ws/2);
+				cross_correlation_coefficient = netOnZeroDXC_compute_crosscorr(sequences, node_a, node_b, k - ws/2 + 1, k + ws/2, k - ws/2 + 1, k + ws/2);
+				correlation_diagram[l][j] = cross_correlation_coefficient;
+				f_statistics = ((double) ws) / (1.0/(cross_correlation_coefficient*cross_correlation_coefficient) - 1.0);
+				pvalue_diagram_fisher[l][j] = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1.0, ws - 2.0);
+
 				j++;
 			}
 		}
@@ -281,6 +304,19 @@ bool netOnZeroDXC_check_iteration_convergence (double * data, double * data_prev
 		return true;
 }
 
+double netOnZeroDXC_compute_wholeseq_crosscorr (const std::vector < std::vector <double> > & sequences, int index_a, int index_b, bool apply_shift, int shift)
+{
+	int	i;
+	double	cross_correlation = 0.0;
+	if (apply_shift) {
+		cross_correlation = 0.5 * netOnZeroDXC_compute_crosscorr(sequences, index_a, index_b, 0, sequences[index_a].size()-shift-1, shift, sequences[index_b].size()-1);
+		cross_correlation += 0.5 * netOnZeroDXC_compute_crosscorr(sequences, index_a, index_b, shift, sequences[index_a].size()-1, 0, sequences[index_b].size()-shift-1);
+	} else {
+		cross_correlation = netOnZeroDXC_compute_crosscorr(sequences, index_a, index_b, 0, sequences[index_a].size()-1, 0, sequences[index_b].size()-1);
+	}
+	return	cross_correlation;
+}
+
 double netOnZeroDXC_compute_crosscorr (const std::vector < std::vector <double> > & sequences, int index_a, int index_b,
 				int start_a, int end_a, int start_b, int end_b)
 {
@@ -301,13 +337,13 @@ double netOnZeroDXC_compute_crosscorr (const std::vector < std::vector <double> 
 	}
 	mean_b /= (double) n;
 
-	double	norm_a = 0;
+	double	var_a = 0;
 	for (j = start_a; j <= end_a; j++)
-		norm_a += (sequences[index_a][j] - mean_a) * (sequences[index_a][j] - mean_a);
+		var_a += (sequences[index_a][j] - mean_a) * (sequences[index_a][j] - mean_a);
 
-	double	norm_b = 0;
+	double	var_b = 0;
 	for (j = start_b; j <= end_b; j++)
-		norm_b += (sequences[index_b][j] - mean_b) * (sequences[index_b][j] - mean_b);
+		var_b += (sequences[index_b][j] - mean_b) * (sequences[index_b][j] - mean_b);
 
 	int	ss = start_a;
 	int	ee = end_a;
@@ -321,14 +357,14 @@ double netOnZeroDXC_compute_crosscorr (const std::vector < std::vector <double> 
 		r2 = (start_b - start_a);
 	}
 
-	double	scalar_product = 0;
+	double	cross_correlation_coefficient = 0;
 	for (j = ss; j <= ee; j++)
-		scalar_product += (sequences[index_a][j + r1] - mean_a) * (sequences[index_b][j + r2] - mean_b);
+		cross_correlation_coefficient += (sequences[index_a][j + r1] - mean_a) * (sequences[index_b][j + r2] - mean_b);
 
-	scalar_product /= sqrt(norm_a);
-	scalar_product /= sqrt(norm_b);
+	cross_correlation_coefficient /= sqrt(var_a);
+	cross_correlation_coefficient /= sqrt(var_b);
 
-	return scalar_product;
+	return cross_correlation_coefficient;
 }
 
 void netOnZeroDXC_initialize_temp_diagram(std::vector < std::vector <double> > & diagram, int size_x, int size_y)
@@ -341,4 +377,141 @@ void netOnZeroDXC_initialize_temp_diagram(std::vector < std::vector <double> > &
 		diagram.push_back(temp_row);
 
 	return;
+}
+
+double netOnZeroDXC_cdf_f_distribution_Q(double x, int nu1, int nu2)	// Numerical recipes, 6.14.10
+{
+	double d1 = (double) nu1 / 2.0;
+	double d2 = (double) nu2 / 2.0;
+	double y = d1*x;
+
+	if ( x <= 0.0 ) {
+		return 1.0;
+	} else {
+		return (1.0 - netOnZeroDXC_incbeta(d1, d2, y/(d2+y)));
+	}
+}
+
+double netOnZeroDXC_incbeta(double a, double b, double x)	// Numerical recipes 6.4
+{
+	if ((a <= 0.0) || (b <= 0.0)) {
+		std::cerr << "ERROR: negative degrees of freedom when evaluating F distribution! Exiting...\n";
+		exit(1);
+	}
+	if (x <= 0.0) return 0.0;
+	else if (x >= 1.0) return 1.0;
+
+	if ((a > 3000) || (b > 3000)) {
+		return netOnZeroDXC_incbeta_approx(a, b, x);
+	}
+
+	double bt = exp(netOnZeroDXC_gamma_logarithm(a+b)-netOnZeroDXC_gamma_logarithm(a)-netOnZeroDXC_gamma_logarithm(b)+a*log(x)+b*log(1.0-x));
+
+	if (x < (a+1.0)/(a+b+2.0))
+		return bt*netOnZeroDXC_incbeta_continued_fraction(a,b,x)/a;
+	else
+		return 1.0 - bt*netOnZeroDXC_incbeta_continued_fraction(b,a,1.0-x)/b;
+}
+
+double netOnZeroDXC_incbeta_continued_fraction(double a, double b, double x)	// Numerical recipes 6.4
+{
+	const double EPS = std::numeric_limits<double>::epsilon();
+	const double FPMIN = std::numeric_limits<double>::min()/EPS;
+	int	m, m2;
+	double	aa, c, d, del, h, qab, qam, qap;
+	qab=a+b;
+	qap=a+1.0;
+	qam=a-1.0;
+	c=1.0;
+	d=1.0-qab*x/qap;
+	if (fabs(d) < FPMIN) d=FPMIN;
+	d=1.0/d;
+	h=d;
+	for (m=1;m<10000;m++) {
+		m2=2*m;
+		aa=m*(b-m)*x/((qam+m2)*(a+m2));
+		d=1.0+aa*d;
+		if (fabs(d) < FPMIN)
+			d=FPMIN;
+		c=1.0+aa/c;
+		if (fabs(c) < FPMIN)
+			c=FPMIN;
+		d=1.0/d;
+		h *= d*c;
+		aa = -(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
+		d=1.0+aa*d;
+		if (fabs(d) < FPMIN)
+			d=FPMIN;
+		c=1.0+aa/c;
+		if (fabs(c) < FPMIN)
+			c=FPMIN;
+		d=1.0/d;
+		del=d*c;
+		h *= del;
+		if (fabs(del-1.0) <= EPS)
+			break;
+	}
+		return h;
+}
+
+double netOnZeroDXC_incbeta_approx(double a, double b, double x)	// Numerical recipes 6.4
+{
+	double	y[18] = {0.0021695375159141994,				// Gauss-Legendre quadrature, NR 6.2
+			0.011413521097787704,0.027972308950302116,0.051727015600492421,
+			0.082502225484340941, 0.12007019910960293,0.16415283300752470,
+			0.21442376986779355, 0.27051082840644336, 0.33199876341447887,
+			0.39843234186401943, 0.46931971407375483, 0.54413605556657973,
+			0.62232745288031077, 0.70331500465597174, 0.78649910768313447,
+			0.87126389619061517, 0.95698180152629142};
+	double	w[18] = {0.0055657196642445571,
+			0.012915947284065419,0.020181515297735382,0.027298621498568734,
+			0.034213810770299537,0.040875750923643261,0.047235083490265582,
+			0.053244713977759692,0.058860144245324798,0.064039797355015485,
+			0.068745323835736408,0.072941885005653087,0.076598410645870640,
+			0.079687828912071670,0.082187266704339706,0.084078218979661945,
+			0.085346685739338721,0.085983275670394821};
+	int	j;
+	double	xu, t, sum, ans;
+	double	a1 = a-1.0, b1 = b-1.0, mu = a/(a+b);
+	double	lnmu = log(mu), lnmuc = log(1.0-mu);
+	t = sqrt(a*b/((a+b)*(a+b)*(a+b+1.0)));
+	if (x > a/(a+b)) {
+		if (x >= 1.0)
+			return 1.0;
+		xu = std::min(1.0, std::max(mu + 10.0*t, x + 5.0*t));
+	} else {
+		if (x <= 0.0)
+			return 0.0;
+		xu = std::max(0.0, std::min(mu - 10.0*t, x - 5.0*t));
+	}
+	sum = 0.0;
+	for (j = 0; j < 18; j++) {
+		t = x + (xu-x)*y[j];
+		sum += w[j] * exp(a1*(log(t)-lnmu) + b1*(log(1-t)-lnmuc));
+	}
+	ans = sum * (xu-x) * exp(a1*lnmu-netOnZeroDXC_gamma_logarithm(a)+b1*lnmuc-netOnZeroDXC_gamma_logarithm(b)+netOnZeroDXC_gamma_logarithm(a+b));
+	return ((ans > 0.0)? 1.0-ans : -ans);
+}
+
+double netOnZeroDXC_gamma_logarithm(double xx)		// Numerical recipes 6.1
+{
+	int	j;
+	double	x, y, temp, ser;
+	static const double coeff[14] = {57.1562356658629235,-59.5979603554754912,
+					14.1360979747417471,-0.491913816097620199,0.339946499848118887e-4,
+					0.465236289270485756e-4,-0.983744753048795646e-4,0.158088703224912494e-3,
+					-0.210264441724104883e-3,0.217439618115212643e-3,-0.164318106536763890e-3,
+					0.844182239838527433e-4,-0.261908384015814087e-4,0.368991826595316234e-5};
+	if (xx <= 0) {
+		std::cerr << "ERROR: negative argument when evaluating log(gamma(x))! Exiting...\n";
+		exit(1);
+	}
+	y = x = xx;
+	temp = x + 5.24218750000000000;
+	temp = (x+0.5)*log(temp) - temp;
+	ser = 0.999999999999997092;
+	for (j = 0; j < 14; j++) {
+		ser += coeff[j]/++y;
+	}
+	return (temp + log(2.5066282746310005*ser/x));
 }

@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,
@@ -50,13 +50,14 @@
 #endif
 
 void netOnZeroDXC_eff_help (char *);
-int netOnZeroDXC_eff_parse_options (int, char **, bool &, bool &, double &, double &, std::string &, std::string &, char &);
+int netOnZeroDXC_eff_parse_options (int, char **, bool &, bool &, double &, double &, bool &, std::string &, std::string &, char &);
 int netOnZeroDXC_eff_check_diagram (const std::vector < std::vector <double> > &);
 
 int main(int argc, char *argv[]) {
 
 	bool	read_from_file = false;
 	bool	write_to_file = false;
+	bool	avoid_overlapping_windows = false;
 	double	threshold_significance = -1.0;
 	double	window_basewidth = 1.0;
 	char	separator_char = 't';
@@ -64,8 +65,8 @@ int main(int argc, char *argv[]) {
 	std::string	selected_output_filename;
 
 	int error;
-	error = netOnZeroDXC_eff_parse_options (argc, argv, read_from_file, write_to_file, threshold_significance, window_basewidth, selected_input_filename,
-					selected_output_filename, separator_char);
+	error = netOnZeroDXC_eff_parse_options (argc, argv, read_from_file, write_to_file, threshold_significance, window_basewidth, avoid_overlapping_windows,
+					selected_input_filename, selected_output_filename, separator_char);
 	if (error)
 		exit(1);
 
@@ -93,16 +94,33 @@ int main(int argc, char *argv[]) {
 	std::vector <double>	efficiency;
 	int	i, j;
 	double	temp_eta;
-	for (i = 0; i < loaded_diagram.size(); i++) {
-		temp_eta = 0.0;
-		for (j = 0; j < loaded_diagram[i].size(); j++) {
-			if (loaded_diagram[i][j] <= threshold_significance) {
-				temp_eta += 1.0;
+	if (!avoid_overlapping_windows) {
+		for (i = 0; i < loaded_diagram.size(); i++) {
+			temp_eta = 0.0;
+			for (j = 0; j < loaded_diagram[i].size(); j++) {
+				if (loaded_diagram[i][j] <= threshold_significance) {
+					temp_eta += 1.0;
+				}
 			}
+			temp_eta /= (double) loaded_diagram[i].size();
+			window_widths.push_back(window_basewidth * (i+1));
+			efficiency.push_back(temp_eta);
 		}
-		temp_eta /= (double) loaded_diagram[i].size();
-		window_widths.push_back(window_basewidth * (i+1));
-		efficiency.push_back(temp_eta);
+	} else if (avoid_overlapping_windows) {
+		double	n;
+		for (i = 0; i < loaded_diagram.size(); i++) {
+			temp_eta = 0.0;
+			n = 0.0;
+			for (j = 0; j < loaded_diagram[i].size(); j += (i + 1)) {
+				if (loaded_diagram[i][j] <= threshold_significance) {
+					temp_eta += 1.0;
+				}
+				n += 1.0;
+			}
+			temp_eta /= n;
+			window_widths.push_back(window_basewidth * (i+1));
+			efficiency.push_back(temp_eta);
+		}
 	}
 
 	std::vector < std::vector <double> >	output_data;
@@ -136,7 +154,8 @@ void netOnZeroDXC_eff_help (char *program_name)
 	std::cerr << "\t-a <#>\t\tset p value significance threshold;\n";
 
 	std::cerr << "\nOptions:\n";
-	std::cerr << "\t-w <#>\t\tset the base window width (corresponding to the first row of the diagram), default is 1.\n";
+	std::cerr << "\t-w <#>\t\tset the base window width (corresponding to the first row of the diagram), default is 1;\n";
+	std::cerr << "\t-avoid-overlap\tcompute efficiency by considering non-overlapping windows only.\n";
 
 	std::cerr << "\nInput/output:\n";
 	std::cerr << "\t-i <fname>\tread from file 'fname' instead of standard input;\n";
@@ -147,7 +166,7 @@ void netOnZeroDXC_eff_help (char *program_name)
 }
 
 int netOnZeroDXC_eff_parse_options (int argc, char *argv[], bool & read_from_file, bool & write_to_file, double & threshold, double & basewidth,
-	 			std::string & input_filename, std::string & output_filename, char & separator_char)
+				bool & avoid_overlapping_windows, std::string & input_filename, std::string & output_filename, char & separator_char)
 {
 	int	n = 1;
 	while (n < argc) {
@@ -170,6 +189,9 @@ int netOnZeroDXC_eff_parse_options (int argc, char *argv[], bool & read_from_fil
 		} else if( strcmp( argv[n], "-w" ) == 0 ) {
 			n++;
 			basewidth = atof(argv[n]);
+
+		} else if( strcmp( argv[n], "-avoid-overlap" ) == 0 ) {
+			avoid_overlapping_windows = true;
 
 		} else if ((strcmp("-h", argv[n]) == 0) || (strcmp("--help", argv[n]) == 0))  {
 			netOnZeroDXC_eff_help(argv[0]);

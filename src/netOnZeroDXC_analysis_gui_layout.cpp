@@ -2,7 +2,7 @@
 //
 // This file is part of the NetOnZeroDXC software package.
 //
-// Version 1.0 - April 2019
+// Version 1.1 - July 2019
 //
 //
 // The NetOnZeroDXC package is free software; you can use it, redistribute it,
@@ -44,6 +44,7 @@ wxBEGIN_EVENT_TABLE(GuiFrame, wxFrame)
 	EVT_MENU(APP_ABOUT, GuiFrame::showAboutDialog)
 	EVT_MENU(APP_QUIT, GuiFrame::onFrameQuit)
 	EVT_THREAD(EVENT_WORKER_UPDATE, GuiFrame::onWorkerEvent)
+	EVT_THREAD(EVENT_PREPARE_PREVIEW, GuiFrame::onPreparePreview)
 wxEND_EVENT_TABLE()
 
 // My frame constructor: this contains the initialization of all buttons, controls and boxes within the main window.
@@ -108,8 +109,17 @@ GuiFrame::GuiFrame (const wxString& title)
 	m_list_of_modalities.Add(wxT("Diagrams of p-values"));
 	m_list_of_modalities.Add(wxT("Efficiency functions"));
 	m_list_of_modalities.Add(wxT("Matrix of time scales"));
+	m_list_of_modalities.Add(wxT("Whole-sequences cross-correlation"));
+	m_list_of_modalities.Add(wxT("Whole-sequences p-values"));
 	radiobox_mode = new wxRadioBox(this, EVENT_CHOSEN_MODE, wxT("Select target output:"), wxDefaultPosition, wxDefaultSize, m_list_of_modalities, 0, wxRA_SPECIFY_ROWS);
 	Connect(EVENT_CHOSEN_MODE, wxEVT_RADIOBOX, wxCommandEventHandler(GuiFrame::onSelectMode));
+
+	// Choice of the method for evaluating p values
+	wxArrayString	m_list_of_pvalue_modes;
+	m_list_of_pvalue_modes.Add(wxT("Surrogate generation"));
+	m_list_of_pvalue_modes.Add(wxT("F-test"));
+	radiobox_pvalue_mode = new wxRadioBox(this, EVENT_CHOSEN_PVALUEMODE, wxT("Method for p-value assessment:"), wxDefaultPosition, wxDefaultSize, m_list_of_pvalue_modes, 0, wxRA_SPECIFY_ROWS);
+	Connect(EVENT_CHOSEN_PVALUEMODE, wxEVT_RADIOBOX, wxCommandEventHandler(GuiFrame::onSelectPvalueMode));
 
 	// List of separators for the input files
 	wxArrayString	m_list_of_separators;
@@ -146,6 +156,7 @@ GuiFrame::GuiFrame (const wxString& title)
 	statictext_nr_surrogates = new wxStaticText(this, wxID_ANY, wxT("Nr. of surrogates:"), wxDefaultPosition, wxDefaultSize, 0);
 	statictext_thr_significance = new wxStaticText(this, wxID_ANY, wxT("Significance threshold:"), wxDefaultPosition, wxDefaultSize, 0);
 	statictext_thr_efficiency = new wxStaticText(this, wxID_ANY, wxT("Efficiency threshold:"), wxDefaultPosition, wxDefaultSize, 0);
+	checkbox_avoid_overlapping = new wxCheckBox(this, EVENT_CHECKBOX_SHIFT, wxT("Avoid overlapping\nwindows"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE | wxALIGN_LEFT);
 	checkbox_source_leakage = new wxCheckBox(this, EVENT_CHECKBOX_SHIFT, wxT("Assess zero-delay cross-corr\nas the average of two delayed\ncross-corr (±τ)"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE | wxALIGN_RIGHT);
 	Connect(EVENT_CHECKBOX_SHIFT, wxEVT_CHECKBOX, wxCommandEventHandler(GuiFrame::onSelectShiftCheckbox));
 	spinner_source_leakage = new wxSpinCtrl(this, wxID_ANY, wxT(""), wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 10, 1);
@@ -155,6 +166,7 @@ GuiFrame::GuiFrame (const wxString& title)
 	checkbox_save_cdiagrams = new wxCheckBox(this, wxID_ANY, wxT("Correlation diagrams"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE);
 	checkbox_save_pdiagrams = new wxCheckBox(this, wxID_ANY, wxT("p-value diagrams"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE);
 	checkbox_save_efficiencies = new wxCheckBox(this, wxID_ANY, wxT("Efficiencies"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE);
+	checkbox_save_wholeseq_xcorr = new wxCheckBox(this, wxID_ANY, wxT("Whole-sequences cross-corr. matrix"), wxDefaultPosition, wxDefaultSize, wxCHK_2STATE);
 	statictext_save_header = new wxStaticText(this, wxID_ANY, wxT("Save intermediate results:"), wxDefaultPosition, wxDefaultSize, 0);
 
 	// Output filename prefix
@@ -178,7 +190,6 @@ GuiFrame::GuiFrame (const wxString& title)
 
 	// Create workspace to store data
 	m_workspace = new ContainerWorkspace();
-
 
 	// Sizers to manage layout
 	wxBoxSizer *vbox_tf_separator = new wxBoxSizer(wxVERTICAL);
@@ -234,13 +245,16 @@ GuiFrame::GuiFrame (const wxString& title)
 	vbox_tf_threff->Add(statictext_thr_efficiency, 0, wxBOTTOM | wxALIGN_LEFT | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 4);
 	vbox_tf_threff->Add(spinner_thr_efficiency, 1, wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN);
 
-	wxFlexGridSizer *gbox_parameters = new wxFlexGridSizer(2, 15, 50);
+	wxFlexGridSizer *gbox_parameters = new wxFlexGridSizer(3, 15, 50);
 	gbox_parameters->Add(vbox_tf_sampling, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	gbox_parameters->Add(vbox_tf_nrsurr, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
+	gbox_parameters->Add(radiobox_pvalue_mode, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	gbox_parameters->Add(vbox_tf_basewidth, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	gbox_parameters->Add(vbox_tf_thrsignif, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
+	gbox_parameters->Add(checkbox_avoid_overlapping, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	gbox_parameters->Add(vbox_tf_nrwidths, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	gbox_parameters->Add(vbox_tf_threff, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
+	gbox_parameters->AddStretchSpacer(1);
 
 	wxBoxSizer *vbox_tf_prefix = new wxBoxSizer(wxVERTICAL);
 	vbox_tf_prefix->Add(statictext_save_prefix, 1, wxBOTTOM | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 4);
@@ -250,6 +264,7 @@ GuiFrame::GuiFrame (const wxString& title)
 	vbox_tf_save->Add(checkbox_save_cdiagrams, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN);
 	vbox_tf_save->Add(checkbox_save_pdiagrams, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN);
 	vbox_tf_save->Add(checkbox_save_efficiencies, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN);
+	vbox_tf_save->Add(checkbox_save_wholeseq_xcorr, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN);
 	wxBoxSizer *hbox_output = new wxBoxSizer(wxHORIZONTAL);
 	hbox_output->Add(vbox_tf_prefix, 1, wxRIGHT | wxTOP | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 10);
 	hbox_output->Add(20, 0, 0, 0, 0);
@@ -295,7 +310,7 @@ GuiFrame::GuiFrame (const wxString& title)
 	vbox_all->Add(hbox_head_in, 0, wxTOP | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	vbox_all->Add(hbox_all_in, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	vbox_all->Add(hbox_head_comp, 0, wxTOP | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 0);
-	vbox_all->Add(hbox_config, 1, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
+	vbox_all->Add(hbox_config, 2, wxALL | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 	vbox_all->Add(hbox_head_run, 0, wxTOP | wxBOTTOM | wxRIGHT | wxEXPAND | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 10);
 	vbox_all->Add(hbox_all_run, 1, wxALL | wxALIGN_RIGHT | wxRESERVE_SPACE_EVEN_IF_HIDDEN, 2);
 
@@ -315,8 +330,8 @@ GuiFrame::GuiFrame (const wxString& title)
 	showAboutDialog(ev);
 
 	// Resize and show the main window
-	SetSize(800,800);
-	SetMinSize(wxSize(800,800));
+	SetSize(960,840);
+	SetMinSize(wxSize(960,840));
 	Show();
 }
 
@@ -380,6 +395,8 @@ void GuiFrame::showPathsAll ()
 	radiobox_mode->Enable(1, 1);
 	radiobox_mode->Enable(2, 1);
 	radiobox_mode->Enable(3, 1);
+	radiobox_mode->Enable(4, 1);
+	radiobox_mode->Enable(5, 1);
 	radiobox_mode->SetSelection(0);
 	wxCommandEvent ev(wxEVT_RADIOBOX, EVENT_CHOSEN_MODE);
 	radiobox_mode->GetEventHandler()->ProcessEvent(ev);
@@ -392,6 +409,8 @@ void GuiFrame::showPathsEfficiency ()
 	radiobox_mode->Enable(1, 0);
 	radiobox_mode->Enable(2, 1);
 	radiobox_mode->Enable(3, 1);
+	radiobox_mode->Enable(4, 0);
+	radiobox_mode->Enable(5, 0);
 	wxCommandEvent ev(wxEVT_RADIOBOX, EVENT_CHOSEN_MODE);
 	radiobox_mode->GetEventHandler()->ProcessEvent(ev);
 }
@@ -403,6 +422,8 @@ void GuiFrame::showPathsMatrix ()
 	radiobox_mode->Enable(1, 0);
 	radiobox_mode->Enable(2, 0);
 	radiobox_mode->Enable(3, 1);
+	radiobox_mode->Enable(4, 0);
+	radiobox_mode->Enable(5, 0);
 	wxCommandEvent ev(wxEVT_RADIOBOX, EVENT_CHOSEN_MODE);
 	radiobox_mode->GetEventHandler()->ProcessEvent(ev);
 }
@@ -426,8 +447,14 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Disable();
 				checkbox_save_efficiencies->SetValue(0);
 				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Disable();
 				break;
 			case 1:
 				spinner_sampling_period->Enable();
@@ -442,8 +469,14 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Disable();
 				checkbox_save_efficiencies->SetValue(0);
 				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Enable();
 				break;
 			case 2:
 				spinner_sampling_period->Enable();
@@ -458,8 +491,14 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Enable();
 				checkbox_save_efficiencies->SetValue(1);
 				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Enable();
 				break;
 			case 3:
 				spinner_sampling_period->Enable();
@@ -474,8 +513,58 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Enable();
 				checkbox_save_efficiencies->SetValue(0);
 				checkbox_save_efficiencies->Enable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Enable();
+				break;
+			case 4:
+				spinner_sampling_period->Disable();
+				spinner_basewidth->Disable();
+				spinner_nr_windowwidths->Disable();
+				spinner_nr_surrogates->Disable();
+				spinner_thr_significance->Disable();
+				spinner_thr_efficiency->Disable();
+				checkbox_save_cdiagrams->SetValue(0);
+				checkbox_save_cdiagrams->Disable();
+				checkbox_save_pdiagrams->SetValue(0);
+				checkbox_save_pdiagrams->Disable();
+				checkbox_save_efficiencies->SetValue(0);
+				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(1);
+				checkbox_save_wholeseq_xcorr->Disable();
+				checkbox_source_leakage->SetValue(0);
+				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Disable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Disable();
+				break;
+			case 5:
+				spinner_sampling_period->Disable();
+				spinner_basewidth->Disable();
+				spinner_nr_windowwidths->Disable();
+				spinner_nr_surrogates->Enable();
+				spinner_thr_significance->Disable();
+				spinner_thr_efficiency->Disable();
+				checkbox_save_cdiagrams->SetValue(0);
+				checkbox_save_cdiagrams->Disable();
+				checkbox_save_pdiagrams->SetValue(0);
+				checkbox_save_pdiagrams->Disable();
+				checkbox_save_efficiencies->SetValue(0);
+				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Enable();
+				checkbox_source_leakage->SetValue(0);
+				checkbox_source_leakage->Enable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Disable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Enable();
 				break;
 		}
 	} else if (m == 2) {
@@ -493,8 +582,14 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Disable();
 				checkbox_save_efficiencies->SetValue(1);
 				checkbox_save_efficiencies->Disable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Disable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Disable();
 				break;
 			case 3:
 				spinner_sampling_period->Enable();
@@ -509,8 +604,14 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 				checkbox_save_pdiagrams->Disable();
 				checkbox_save_efficiencies->SetValue(0);
 				checkbox_save_efficiencies->Enable();
+				checkbox_save_wholeseq_xcorr->SetValue(0);
+				checkbox_save_wholeseq_xcorr->Disable();
 				checkbox_source_leakage->SetValue(0);
 				checkbox_source_leakage->Disable();
+				checkbox_avoid_overlapping->SetValue(0);
+				checkbox_avoid_overlapping->Enable();
+				radiobox_pvalue_mode->SetSelection(0);
+				radiobox_pvalue_mode->Disable();
 				break;
 		}
 	} else if (m == 3) {
@@ -526,9 +627,17 @@ void GuiFrame::onSelectMode (wxCommandEvent& WXUNUSED(event))
 		checkbox_save_pdiagrams->Disable();
 		checkbox_save_efficiencies->SetValue(0);
 		checkbox_save_efficiencies->Disable();
+		checkbox_save_wholeseq_xcorr->SetValue(0);
+		checkbox_save_wholeseq_xcorr->Disable();
 		checkbox_source_leakage->SetValue(0);
 		checkbox_source_leakage->Disable();
+		checkbox_avoid_overlapping->SetValue(0);
+		checkbox_avoid_overlapping->Disable();
+		radiobox_pvalue_mode->SetSelection(0);
+		radiobox_pvalue_mode->Disable();
 	}
+	wxCommandEvent ev(wxEVT_CHECKBOX, EVENT_CHECKBOX_SHIFT);
+	checkbox_source_leakage->GetEventHandler()->ProcessEvent(ev);
 	return;
 }
 
@@ -539,6 +648,14 @@ void GuiFrame::onSelectShiftCheckbox (wxCommandEvent& WXUNUSED(event)) {
 	} else {
 		spinner_source_leakage->Hide();
 		statictext_source_leakage->Hide();
+	}
+}
+
+void GuiFrame::onSelectPvalueMode(wxCommandEvent& WXUNUSED(event)) {
+	if (radiobox_pvalue_mode->GetSelection() == 0) {
+		spinner_nr_surrogates->Enable();
+	} else {
+		spinner_nr_surrogates->Disable();
 	}
 }
 
@@ -569,6 +686,7 @@ GuiFrame::~GuiFrame ()
 
 	delete	radiobox_selectpathway;
 	delete	radiobox_mode;
+	delete	radiobox_pvalue_mode;
 	delete	button_runworker;
 	delete	button_openmanyfiles;
 	delete	button_outputfolder;
@@ -588,9 +706,11 @@ GuiFrame::~GuiFrame ()
 	delete	spinner_thr_efficiency;
 
 	delete	checkbox_source_leakage;
+	delete	checkbox_avoid_overlapping;
 	delete	checkbox_save_cdiagrams;
 	delete	checkbox_save_pdiagrams;
 	delete	checkbox_save_efficiencies;
+	delete	checkbox_save_wholeseq_xcorr;
 	delete	checkbox_parallel_omp;
 
 	delete	textctrl_save_prefix;
@@ -622,7 +742,7 @@ void GuiFrame::showAboutDialog (wxCommandEvent& WXUNUSED(event))
 {
 	wxAboutDialogInfo info;
 	info.SetName(wxT("NetOnZeroDXC - Analysis"));
-	info.SetVersion(wxT("1.0"));
+	info.SetVersion(wxT("1.1"));
 	info.SetDescription(wxT("An interface for assessing zero-delay cross correlation between time series associated to nodes in a network.\nIf you use this program for your analyses, please cite:\nChaos 28(6):063127 (2018)."));
 	info.SetCopyright(wxT("2019"));
 
