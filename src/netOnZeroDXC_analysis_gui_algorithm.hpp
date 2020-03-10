@@ -30,3 +30,4 @@
 
 int netOnZeroDXC_compute_pdiagram (std::vector < std::vector <double> > &, WorkerThread*, ContainerWorkspace*, double &, int, int, int, int, int, int, bool, int, int);
 int netOnZeroDXC_compute_wholeseq_pvalue (double &, WorkerThread*, ContainerWorkspace*, double &, int, int, int, bool, int, int);
+int netOnZeroDXC_validate_node_data (ContainerWorkspace*);

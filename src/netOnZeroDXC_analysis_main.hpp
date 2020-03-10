@@ -255,7 +255,9 @@ public:
 	std::vector < std::vector <double> >			efficiencies;
 	std::vector <double>					window_widths;
 	std::vector <std::string>				node_labels;
+	std::vector <bool>					node_valid;
 	std::vector <PairOfLabels>				node_pairs;
+	std::vector <bool>					node_pairs_valid;
 	std::vector < std::vector <double> >			wholeseq_xcorr;
 	std::vector < std::vector <double> >			wholeseq_pvalue;
 

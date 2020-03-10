@@ -95,7 +95,7 @@ int netOnZeroDXC_parse_line (std::vector <double> & data_line, std::string & tex
                 getline(string_buffer_stream, temp_string_token, '\t');
                 x = atof(temp_string_token.c_str());
                 if ((x != 0 && x/x != x/x) || (x != x))
-			return 1;
+			x = std::numeric_limits<double>::quiet_NaN();
                 data_line.push_back(x);
 	}
 
@@ -182,6 +182,8 @@ int netOnZeroDXC_load_single_file (std::vector < std::vector <double> > & data_t
 		}
 		data_table.push_back(temp_sequence);
 		if ((i+1) < 10) {
+			sprintf(temp_label, "00%d", i + 1);
+		} else if ((i+1) < 100) {
 			sprintf(temp_label, "0%d", i + 1);
 		} else {
 			sprintf(temp_label, "%d", i + 1);

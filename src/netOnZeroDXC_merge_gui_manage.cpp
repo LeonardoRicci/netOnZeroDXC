@@ -161,7 +161,10 @@ void GuiFrame::validatePreprocessData (wxCommandEvent& WXUNUSED(event))
 							k = netOnZeroDXC_associate_index_of_pair(data_container->node_pairs, data_container->node_labels, i, j);
 							temp_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->systems_stored[s].recordings_stored[r].efficiencies[k],
 														data_container->window_widths, ((double) eta_index) / 100.0);
-							temp_matrix[j][i] = temp_matrix[i][j];
+							if (temp_matrix[i][j] != temp_matrix[i][j])
+								temp_matrix[j][i] = std::numeric_limits<double>::quiet_NaN();
+							else
+								temp_matrix[j][i] = temp_matrix[i][j];
 						}
 					}
 					temp_matrix[i][i] = 0.0;
@@ -407,22 +410,32 @@ ObservedSystem::ObservedSystem (const std::string name)
 
 double ObservedSystem::mergeRecordingMatrices (int i, int j, int rank_recordings, int eta_index)
 {
-	double	huge = std::numeric_limits<double>::max();
-	int	number_of_recordings = recordings_stored.size();
 	std::vector <double>	temp_list;
 	int	r;
+	int	number_of_recordings = recordings_stored.size();
+	double	x;
+	double	huge = std::numeric_limits<double>::max();
+
 	for (r = 0; r < number_of_recordings; r++) { // traverse the recordings
 		if (eta_index < 0) {
-			temp_list.push_back(recordings_stored[r].matrix_timescales[i][j]);
+			x = recordings_stored[r].matrix_timescales[i][j];
+			if (x != x)
+				temp_list.push_back(-1.0);
+			else
+				temp_list.push_back(x);
 		} else {
-			temp_list.push_back(recordings_stored[r].matrices_multieta[eta_index][i][j]);
+			x = recordings_stored[r].matrices_multieta[eta_index][i][j];
+			if (x != x)
+				temp_list.push_back(-1.0);
+			else
+				temp_list.push_back(x);
 		}
 	}
 	for (r = 0; r < temp_list.size(); r++) {
 		if (temp_list[r] == -1.0)
 			temp_list[r] = huge;
 	}
-	partial_sort(temp_list.begin(), temp_list.begin() + rank_recordings, temp_list.end());
+	std::partial_sort(temp_list.begin(), temp_list.begin() + rank_recordings, temp_list.end());
 	return temp_list[rank_recordings - 1];
 }
 

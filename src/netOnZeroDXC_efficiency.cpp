@@ -92,17 +92,25 @@ int main(int argc, char *argv[]) {
 
 	std::vector <double>	window_widths;
 	std::vector <double>	efficiency;
+	bool	valid_row;
 	int	i, j;
 	double	temp_eta;
 	if (!avoid_overlapping_windows) {
 		for (i = 0; i < loaded_diagram.size(); i++) {
 			temp_eta = 0.0;
+			valid_row = true;
 			for (j = 0; j < loaded_diagram[i].size(); j++) {
+				if (loaded_diagram[i][j] != loaded_diagram[i][j]) {
+					temp_eta = std::numeric_limits<double>::quiet_NaN();
+					valid_row = false;
+					break;
+				}
 				if (loaded_diagram[i][j] <= threshold_significance) {
 					temp_eta += 1.0;
 				}
 			}
-			temp_eta /= (double) loaded_diagram[i].size();
+			if (valid_row)
+				temp_eta /= (double) loaded_diagram[i].size();
 			window_widths.push_back(window_basewidth * (i+1));
 			efficiency.push_back(temp_eta);
 		}
@@ -111,13 +119,20 @@ int main(int argc, char *argv[]) {
 		for (i = 0; i < loaded_diagram.size(); i++) {
 			temp_eta = 0.0;
 			n = 0.0;
+			valid_row = true;
 			for (j = 0; j < loaded_diagram[i].size(); j += (i + 1)) {
+				if (loaded_diagram[i][j] != loaded_diagram[i][j]) {
+					temp_eta = std::numeric_limits<double>::quiet_NaN();
+					valid_row = false;
+					break;
+				}
 				if (loaded_diagram[i][j] <= threshold_significance) {
 					temp_eta += 1.0;
 				}
 				n += 1.0;
 			}
-			temp_eta /= n;
+			if (valid_row)
+				temp_eta /= n;
 			window_widths.push_back(window_basewidth * (i+1));
 			efficiency.push_back(temp_eta);
 		}

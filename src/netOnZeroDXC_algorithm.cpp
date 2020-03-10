@@ -61,6 +61,8 @@ double netOnZeroDXC_compute_wmatrix_element (const std::vector <double> & effici
 {
 	int	i;
 	for (i = 0; i < efficiency.size(); i++) {
+		if (efficiency[i] != efficiency[i])
+			return std::numeric_limits<double>::quiet_NaN();
 		if (efficiency[i] > threshold_eta)
 			return window_widths[i];
 	}
@@ -375,6 +377,28 @@ void netOnZeroDXC_initialize_temp_diagram(std::vector < std::vector <double> > &
 	int	i;
 	for (i = 0; i < size_y; i++)
 		diagram.push_back(temp_row);
+
+	return;
+}
+
+void netOnZeroDXC_initialize_nan_diagram(std::vector < std::vector <double> > & diagram, int size_x, int size_y)
+{
+	std::vector <double>	temp_row(size_x, std::numeric_limits<double>::quiet_NaN());
+
+	diagram.clear();
+	int	i;
+	for (i = 0; i < size_y; i++)
+		diagram.push_back(temp_row);
+
+	return;
+}
+
+void netOnZeroDXC_initialize_nan_efficiency(std::vector <double> & data_container, int size)
+{
+	data_container.clear();
+	int	i;
+	for (i = 0; i < size; i++)
+		data_container.push_back(std::numeric_limits<double>::quiet_NaN());
 
 	return;
 }

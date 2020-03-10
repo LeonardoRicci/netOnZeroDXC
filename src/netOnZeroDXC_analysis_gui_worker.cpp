@@ -228,15 +228,16 @@ int GuiFrame::loadParameterTable ()
 	m_workspace->path_output_prefix = prefix.ToStdString();
 
 	int error = m_workspace->validateParameterTable();
-	if (error) {
+	if (error)
 		return 1;
-	}
 
 	if (m_workspace->parameter_computation_pathway < 2)
 		netOnZeroDXC_fill_list_pairs(m_workspace->node_pairs, m_workspace->node_labels);
 
 	if (m_workspace->parameter_computation_pathway > 1)
 		netOnZeroDXC_postfill_list_labels(m_workspace->node_labels, m_workspace->node_pairs);
+
+	netOnZeroDXC_validate_node_data(m_workspace);
 
 	return 0;
 }
@@ -377,10 +378,20 @@ wxThread::ExitCode WorkerThread::Entry ()
 			int	i, j;
 			netOnZeroDXC_initialize_temp_diagram(data_container->wholeseq_xcorr, data_container->node_labels.size(), data_container->node_labels.size());
 			for (i = 0; i < data_container->node_labels.size() - 1; i++) {
-				data_container->wholeseq_xcorr[i][i] = 1.0;
+
+				if (data_container->node_valid[i])
+					data_container->wholeseq_xcorr[i][i] = 1.0;
+				else
+					data_container->wholeseq_xcorr[i][i] = std::numeric_limits<double>::quiet_NaN();
+
 				for (j = i + 1; j < data_container->node_labels.size(); j++) {	// Compute cross-correlation between all pairs of time series
-					data_container->wholeseq_xcorr[i][j] = netOnZeroDXC_compute_wholeseq_crosscorr(data_container->sequences, i, j, apply_shift, shift_value);
-					data_container->wholeseq_xcorr[j][i] = data_container->wholeseq_xcorr[i][j];
+					if (data_container->node_valid[i] && data_container->node_valid[j]) {
+						data_container->wholeseq_xcorr[i][j] = netOnZeroDXC_compute_wholeseq_crosscorr(data_container->sequences, i, j, apply_shift, shift_value);
+						data_container->wholeseq_xcorr[j][i] = data_container->wholeseq_xcorr[i][j];
+					} else {
+						data_container->wholeseq_xcorr[i][j] = std::numeric_limits<double>::quiet_NaN();
+						data_container->wholeseq_xcorr[j][i] = std::numeric_limits<double>::quiet_NaN();
+					}
 					if (parent_frame->workCancelled() || TestDestroy()) {
 						asked_to_exit = true;
 						break;
@@ -395,7 +406,10 @@ wxThread::ExitCode WorkerThread::Entry ()
 			if (asked_to_exit)
 				return NULL;
 
-			data_container->wholeseq_xcorr[i][i] = 1.0;
+			if (data_container->node_valid[i])
+				data_container->wholeseq_xcorr[i][i] = 1.0;
+			else
+				data_container->wholeseq_xcorr[i][i] = std::numeric_limits<double>::quiet_NaN();
 
 			int	error;
 			if (print_wholeseq_xcorr) {
@@ -413,29 +427,36 @@ wxThread::ExitCode WorkerThread::Entry ()
 					wxThreadEvent eventStartPath05(wxEVT_THREAD, EVENT_WORKER_UPDATE);
 					eventStartPath05.SetInt(-250);
 					wxQueueEvent(parent_frame, eventStartPath05.Clone());
-					double		temp_pvalue;
+					double	temp_pvalue;
 					double	progress_shared = 0.0;
-					int		k = 0;
+					int	k = 0;
 					netOnZeroDXC_initialize_temp_diagram(data_container->wholeseq_pvalue, data_container->node_labels.size(), data_container->node_labels.size());	// wholeseq_pvalue is initialized to zeros by this function
 					for (i = 0; i < data_container->node_labels.size() - 1; i++) {
+						if (!data_container->node_valid[i])
+							data_container->wholeseq_pvalue[i][i] = std::numeric_limits<double>::quiet_NaN();
 						for (j = i + 1; j < data_container->node_labels.size(); j++) {
-							asked_to_exit = netOnZeroDXC_compute_wholeseq_pvalue(temp_pvalue, this, data_container, progress_shared, i, j, M, apply_shift, shift_value, number_threads);
-							k++;
-							if (asked_to_exit) {
-								break;
-							} else {
-								data_container->wholeseq_pvalue[i][j] = temp_pvalue;
-								data_container->wholeseq_pvalue[j][i] = temp_pvalue;
+							if (data_container->node_valid[i] && data_container->node_valid[j]) {
+								asked_to_exit = netOnZeroDXC_compute_wholeseq_pvalue(temp_pvalue, this, data_container, progress_shared, i, j, M, apply_shift, shift_value, number_threads);
+								k++;
+								if (asked_to_exit) {
+									break;
+								} else {
+									data_container->wholeseq_pvalue[i][j] = temp_pvalue;
+									data_container->wholeseq_pvalue[j][i] = temp_pvalue;
 
-								std::stringstream	message_updated;
-								message_updated << "Computing p-values for whole-sequence correlations by surrogate generation.\nThis can take a very long time.\nPair ";
-								message_updated << k << " out of " << data_container->node_pairs.size() << "\nPress [Cancel] to abort.";
-								wxString	message = message_updated.str();
-								wxThreadEvent eventNewPair05(wxEVT_THREAD, EVENT_WORKER_UPDATE);
-								eventNewPair05.SetInt(-62);
-								eventNewPair05.SetString(message);
-								wxQueueEvent(parent_frame, eventNewPair05.Clone());
-								progress_shared = 0.0;
+									std::stringstream	message_updated;
+									message_updated << "Computing p-values for whole-sequence correlations by surrogate generation.\nThis can take a very long time.\nPair ";
+									message_updated << k << " out of " << data_container->node_pairs.size() << "\nPress [Cancel] to abort.";
+									wxString	message = message_updated.str();
+									wxThreadEvent eventNewPair05(wxEVT_THREAD, EVENT_WORKER_UPDATE);
+									eventNewPair05.SetInt(-62);
+									eventNewPair05.SetString(message);
+									wxQueueEvent(parent_frame, eventNewPair05.Clone());
+									progress_shared = 0.0;
+								}
+							} else {
+								data_container->wholeseq_pvalue[i][j] = std::numeric_limits<double>::quiet_NaN();
+								data_container->wholeseq_pvalue[j][i] = std::numeric_limits<double>::quiet_NaN();
 							}
 						}
 						if (asked_to_exit)
@@ -454,14 +475,21 @@ wxThread::ExitCode WorkerThread::Entry ()
 					int		k = 0;
 					netOnZeroDXC_initialize_temp_diagram(data_container->wholeseq_pvalue, data_container->node_labels.size(), data_container->node_labels.size());	// wholeseq_pvalue is initialized to zeros by this function
 					for (i = 0; i < data_container->node_labels.size() - 1; i++) {
+						if (!data_container->node_valid[i])
+							data_container->wholeseq_pvalue[i][i] = std::numeric_limits<double>::quiet_NaN();
 						for (j = i + 1; j < data_container->node_labels.size(); j++) {
-							temp_cc2 = data_container->wholeseq_xcorr[i][j]*data_container->wholeseq_xcorr[i][j];
-							temp_n = (double) (data_container->sequences[0].size() - ((apply_shift)? shift_value : 0));
-							f_statistics = 1.0/(1.0/temp_cc2 - 1.0);
-							f_statistics *= temp_n;
-							temp_pvalue = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1, temp_n - 2);
-							data_container->wholeseq_pvalue[i][j] = temp_pvalue;
-							data_container->wholeseq_pvalue[j][i] = temp_pvalue;
+							if (data_container->node_valid[i] && data_container->node_valid[j]) {
+								temp_cc2 = data_container->wholeseq_xcorr[i][j]*data_container->wholeseq_xcorr[i][j];
+								temp_n = (double) (data_container->sequences[0].size() - ((apply_shift)? shift_value : 0));
+								f_statistics = 1.0/(1.0/temp_cc2 - 1.0);
+								f_statistics *= temp_n;
+								temp_pvalue = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1, temp_n - 2);
+								data_container->wholeseq_pvalue[i][j] = temp_pvalue;
+								data_container->wholeseq_pvalue[j][i] = temp_pvalue;
+							} else {
+								data_container->wholeseq_pvalue[i][j] = std::numeric_limits<double>::quiet_NaN();
+								data_container->wholeseq_pvalue[j][i] = std::numeric_limits<double>::quiet_NaN();
+							}
 						}
 					}
 				}
@@ -508,9 +536,14 @@ wxThread::ExitCode WorkerThread::Entry ()
 					asked_to_exit = true;
 					break;
 				}
-				netOnZeroDXC_initialize_temp_diagram(temp_diagram, k_size, W);
-				netOnZeroDXC_initialize_temp_diagram(temp_diagram_fisher_pvalue, k_size, W);
-				netOnZeroDXC_compute_cdiagram (temp_diagram, temp_diagram_fisher_pvalue, data_container->sequences, i, j, L, W, apply_shift, shift_value);
+				if (data_container->node_valid[i] && data_container->node_valid[j]) {
+					netOnZeroDXC_initialize_temp_diagram(temp_diagram, k_size, W);
+					netOnZeroDXC_initialize_temp_diagram(temp_diagram_fisher_pvalue, k_size, W);
+					netOnZeroDXC_compute_cdiagram (temp_diagram, temp_diagram_fisher_pvalue, data_container->sequences, i, j, L, W, apply_shift, shift_value);
+				} else {
+					netOnZeroDXC_initialize_nan_diagram(temp_diagram, k_size, W);
+					netOnZeroDXC_initialize_nan_diagram(temp_diagram_fisher_pvalue, k_size, W);
+				}
 				data_container->diagrams_correlation.push_back(temp_diagram);
 				data_container->diagrams_pvalue_fisher.push_back(temp_diagram_fisher_pvalue);
 			}
@@ -556,8 +589,12 @@ wxThread::ExitCode WorkerThread::Entry ()
 			int	error;
 			for (i = 0; i < data_container->node_labels.size() - 1; i++) {
 				for (j = i + 1; j < data_container->node_labels.size(); j++) {
-					netOnZeroDXC_initialize_temp_diagram(temp_diagram, k_size, W);
-					asked_to_exit = netOnZeroDXC_compute_pdiagram(temp_diagram, this, data_container, progress_shared, i, j, k, M, L, W, apply_shift, shift_value, number_threads);
+					if (data_container->node_valid[i] && data_container->node_valid[j]) {
+						netOnZeroDXC_initialize_temp_diagram(temp_diagram, k_size, W);
+						asked_to_exit = netOnZeroDXC_compute_pdiagram(temp_diagram, this, data_container, progress_shared, i, j, k, M, L, W, apply_shift, shift_value, number_threads);
+					} else {
+						netOnZeroDXC_initialize_nan_diagram(temp_diagram, k_size, W);
+					}
 					k++;
 					if (asked_to_exit) {
 						break;
@@ -636,7 +673,11 @@ wxThread::ExitCode WorkerThread::Entry ()
 				break;
 			}
 			temp_efficiency.clear();
-			netOnZeroDXC_compute_efficiency(temp_efficiency, data_container->diagrams_pvalue[i], alpha, avoid_overlapping_windows);
+			if (data_container->node_pairs_valid[i])
+				netOnZeroDXC_compute_efficiency(temp_efficiency, data_container->diagrams_pvalue[i], alpha, avoid_overlapping_windows);
+			else
+				netOnZeroDXC_initialize_nan_efficiency(temp_efficiency, data_container->window_widths.size());
+
 			data_container->efficiencies.push_back(temp_efficiency);
 
 			wxThreadEvent eventUpdate2(wxEVT_THREAD, EVENT_WORKER_UPDATE);
@@ -681,7 +722,11 @@ wxThread::ExitCode WorkerThread::Entry ()
 						return NULL;
 					}
 					temp_efficiency.clear();
-					netOnZeroDXC_compute_efficiency(temp_efficiency, data_container->diagrams_pvalue[i], ((double) k) / 1000.0, avoid_overlapping_windows);
+					if (data_container->node_pairs_valid[i])
+						netOnZeroDXC_compute_efficiency(temp_efficiency, data_container->diagrams_pvalue[i], ((double) k) / 1000.0, avoid_overlapping_windows);
+					else
+						netOnZeroDXC_initialize_nan_efficiency(temp_efficiency, data_container->window_widths.size());
+
 					temp_efficiency_list.push_back(temp_efficiency);
 				}
 				data_container->efficiencies_multialpha.push_back(temp_efficiency_list);
@@ -701,14 +746,25 @@ wxThread::ExitCode WorkerThread::Entry ()
 		if (parent_frame->workCancelled() || TestDestroy()) {
 			return NULL;
 		}
-		timescale_matrix[i][i] = 0.0;
+		if (data_container->node_valid[i])
+			timescale_matrix[i][i] = 0.0;
+		else
+			timescale_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 		for (j = i + 1; j < data_container->node_labels.size(); j++) {
 			k = netOnZeroDXC_associate_index_of_pair(data_container->node_pairs, data_container->node_labels, i, j);
-			timescale_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies[k], data_container->window_widths, eta_0);
-			timescale_matrix[j][i] = timescale_matrix[i][j];
+			if (data_container->node_valid[i] && data_container->node_valid[j]) {
+				timescale_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies[k], data_container->window_widths, eta_0);
+				timescale_matrix[j][i] = timescale_matrix[i][j];
+			} else {
+				timescale_matrix[i][j] = std::numeric_limits<double>::quiet_NaN();
+				timescale_matrix[j][i] = std::numeric_limits<double>::quiet_NaN();
+			}
 		}
 	}
-	timescale_matrix[i][i] = 0.0;
+	if (data_container->node_valid[i])
+		timescale_matrix[i][i] = 0.0;
+	else
+		timescale_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 
 	wxThreadEvent eventUpdate4(wxEVT_THREAD, EVENT_WORKER_UPDATE);
 	eventUpdate4.SetInt(-252);
@@ -725,14 +781,25 @@ wxThread::ExitCode WorkerThread::Entry ()
 			temp_matrix.clear();
 			temp_matrix.resize(data_container->node_labels.size(), matrix_row);
 			for (i = 0; i < data_container->node_labels.size() - 1; i++) {
-				temp_matrix[i][i] = 0.0;
+				if (data_container->node_valid[i])
+					temp_matrix[i][i] = 0.0;
+				else
+					temp_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 				for (j = i + 1; j < data_container->node_labels.size(); j++) {
 					k = netOnZeroDXC_associate_index_of_pair(data_container->node_pairs, data_container->node_labels, i, j);
-					temp_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies[k], data_container->window_widths, ((double) eta_index) / 100.0);
-					temp_matrix[j][i] = temp_matrix[i][j];
+					if (data_container->node_valid[i] && data_container->node_valid[j]) {
+						temp_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies[k], data_container->window_widths, ((double) eta_index) / 100.0);
+						temp_matrix[j][i] = temp_matrix[i][j];
+					} else {
+						temp_matrix[i][j] = std::numeric_limits<double>::quiet_NaN();
+						temp_matrix[j][i] = std::numeric_limits<double>::quiet_NaN();
+					}
 				}
 			}
-			temp_matrix[i][i] = 0.0;
+			if (data_container->node_valid[i])
+				temp_matrix[i][i] = 0.0;
+			else
+				temp_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 			data_container->matrices_multieta.push_back(temp_matrix);
 			wxThreadEvent eventUpdate5(wxEVT_THREAD, EVENT_WORKER_UPDATE);
 			eventUpdate5.SetInt((eta_index < 100)? eta_index : 99);
@@ -752,14 +819,25 @@ wxThread::ExitCode WorkerThread::Entry ()
 					return NULL;
 				}
 				for (i = 0; i < data_container->node_labels.size() - 1; i++) {
-					temp_matrix[i][i] = 0.0;
+					if (data_container->node_valid[i])
+						temp_matrix[i][i] = 0.0;
+					else
+						temp_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 					for (j = i + 1; j < data_container->node_labels.size(); j++) {
 						k = netOnZeroDXC_associate_index_of_pair(data_container->node_pairs, data_container->node_labels, i, j);
-						temp_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies_multialpha[alpha_index][k], data_container->window_widths, ((double) eta_index) / 100.0);
-						temp_matrix[j][i] = temp_matrix[i][j];
+						if (data_container->node_valid[i] && data_container->node_valid[j]) {
+							temp_matrix[i][j] = netOnZeroDXC_compute_wmatrix_element(data_container->efficiencies_multialpha[alpha_index][k], data_container->window_widths, ((double) eta_index) / 100.0);
+							temp_matrix[j][i] = temp_matrix[i][j];
+						} else {
+							temp_matrix[i][j] = std::numeric_limits<double>::quiet_NaN();
+							temp_matrix[j][i] = std::numeric_limits<double>::quiet_NaN();
+						}
 					}
 				}
-				temp_matrix[i][i] = 0.0;
+				if (data_container->node_valid[i])
+					temp_matrix[i][i] = 0.0;
+				else
+					temp_matrix[i][i] = std::numeric_limits<double>::quiet_NaN();
 				temp_matrix_list.push_back(temp_matrix);
 			}
 			data_container->matrices_multieta_multialpha.push_back(temp_matrix_list);
@@ -819,7 +897,9 @@ void ContainerWorkspace::clearWorkspace ()
 	efficiencies.clear();
 	window_widths.clear();
 	node_labels.clear();
+	node_valid.clear();
 	node_pairs.clear();
+	node_pairs_valid.clear();
 	wholeseq_xcorr.clear();
 	wholeseq_pvalue.clear();
 

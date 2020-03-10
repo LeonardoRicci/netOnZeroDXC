@@ -47,7 +47,10 @@
 	#include "netOnZeroDXC_algorithm.hpp"
 	#define INCLUDED_ALGORITHM
 #endif
-
+#ifndef INCLUDED_IOFUNCTIONS
+	#include "netOnZeroDXC_io.hpp"
+	#define INCLUDED_IOFUNCTIONS
+#endif
 
 int netOnZeroDXC_compute_pdiagram (std::vector < std::vector <double> > & pvalue_diagram, WorkerThread* owner_thread, ContainerWorkspace* workspace,
 				double & progress, int index_a, int index_b, int index_diagram, int M, int w_base, int W, bool apply_shift,
@@ -271,6 +274,94 @@ int netOnZeroDXC_compute_wholeseq_pvalue (double & pvalue, WorkerThread* owner_t
 
 	if (!go_flag) {
 		return 1;
+	}
+
+	return 0;
+}
+
+int netOnZeroDXC_validate_node_data (ContainerWorkspace* workspace)
+{
+	int loaded_data = workspace->parameter_computation_pathway;
+
+	std::vector <std::string>	a;
+	std::vector <bool>		node_valid;
+	std::vector <PairOfLabels>	node_pairs;
+	std::vector <bool>		node_pairs_valid;
+
+	bool	stop_search = false;
+	int	i, j, k;
+
+	if (loaded_data < 2) {
+		for (i = 0; i < workspace->node_labels.size(); i++) {
+			workspace->node_valid.push_back(true);
+			for (j = 0; j < workspace->sequences[i].size(); j++) {
+				if (workspace->sequences[i][j] != workspace->sequences[i][j]) {
+					workspace->node_valid.back() = false;
+					break;
+				}
+			}
+		}
+		for (i = 0; i < workspace->node_labels.size() - 1; i++) {
+			for (j = i + 1; j < workspace->node_labels.size(); j++) {
+				if (workspace->node_valid[i] && workspace->node_valid[j])
+					workspace->node_pairs_valid.push_back(true);
+				else
+					workspace->node_pairs_valid.push_back(false);
+			}
+		}
+	} else if (loaded_data == 2) {
+		for (k = 0; k < workspace->diagrams_pvalue.size(); k++) {
+			workspace->node_pairs_valid.push_back(true);
+			stop_search = false;
+			for (i = 0; i < workspace->diagrams_pvalue[k].size(); i++) {
+				for (j = 0; j < workspace->diagrams_pvalue[k][i].size(); j++) {
+					if (workspace->diagrams_pvalue[k][i][j] != workspace->diagrams_pvalue[k][i][j]) {
+						workspace->node_pairs_valid.back() = false;
+						stop_search = true;
+						break;
+					}
+				}
+				if (stop_search)
+					break;
+			}
+		}
+		for (i = 0; i < workspace->node_labels.size(); i++) {
+			stop_search = false;
+			for (j = 0; j < workspace->node_labels.size(); j++) {
+				if (i != j) {
+					k = netOnZeroDXC_associate_index_of_pair(workspace->node_pairs, workspace->node_labels, i, j);
+					if (workspace->node_pairs_valid[k]) {
+						stop_search = true;
+						break;
+					}
+				}
+			}
+			workspace->node_valid.push_back(stop_search);
+		}
+	} else if (loaded_data == 3) {
+		for (k = 0; k < workspace->efficiencies.size(); k++) {
+			workspace->node_pairs_valid.push_back(true);
+			stop_search = false;
+			for (i = 0; i < workspace->efficiencies[k].size(); i++) {
+				if (workspace->efficiencies[k][i] != workspace->efficiencies[k][i]) {
+					workspace->node_pairs_valid.back() = false;
+					break;
+				}
+			}
+		}
+		for (i = 0; i < workspace->node_labels.size(); i++) {
+			stop_search = false;
+			for (j = 0; j < workspace->node_labels.size(); j++) {
+				if (i != j) {
+					k = netOnZeroDXC_associate_index_of_pair(workspace->node_pairs, workspace->node_labels, i, j);
+					if (workspace->node_pairs_valid[k]) {
+						stop_search = true;
+						break;
+					}
+				}
+			}
+			workspace->node_valid.push_back(stop_search);
+		}
 	}
 
 	return 0;

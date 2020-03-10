@@ -62,6 +62,7 @@ int main(int argc, char *argv[]) {
 	bool	use_surrogate_generation = true;
 	bool	compute_wholesequence_xcorr = false;
 	bool	enable_parallel_computing = false;
+	bool	invalid_sequences = false;
 	int	index_a = -1, index_b = -1;
 	int	apply_tau = -1;
 	int	nr_window_widths = -1, window_basewidth = -1, nr_surrogates = 100;
@@ -108,8 +109,22 @@ int main(int argc, char *argv[]) {
 	        error = netOnZeroDXC_xc_check_sequences(loaded_sequences, index_a, index_b, nr_window_widths, window_basewidth, apply_tau);
 		if (error)
 			exit(1);
+
 		index_a--;
 		index_b--;
+
+		int	i;
+		for (i = 0; i < loaded_sequences[index_a].size(); i++) {
+			if (loaded_sequences[index_a][i] != loaded_sequences[index_a][i]) {
+				invalid_sequences = true;
+				break;
+			}
+			if (loaded_sequences[index_b][i] != loaded_sequences[index_b][i]) {
+				invalid_sequences = true;
+				break;
+			}
+		}
+
 		std::vector <double>	dummy_vector;
 		int	k;
 		if (apply_tau > 0) {
@@ -123,7 +138,17 @@ int main(int argc, char *argv[]) {
 		std::vector < std::vector <double> >	p_value_diagram(nr_window_widths, dummy_vector);
 		std::vector < std::vector <double> >	p_value_diagram_fisher(nr_window_widths, dummy_vector);
 
-		netOnZeroDXC_compute_cdiagram(correlation_diagram_data, p_value_diagram_fisher, loaded_sequences, index_a, index_b, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
+		if (invalid_sequences) {
+			for (k = 0; k < correlation_diagram_data.size(); k++) {
+				for (i = 0; i < correlation_diagram_data[k].size(); i++) {
+					correlation_diagram_data[k][i] = std::numeric_limits<double>::quiet_NaN();
+					p_value_diagram[k][i] = std::numeric_limits<double>::quiet_NaN();
+					p_value_diagram_fisher[k][i] = std::numeric_limits<double>::quiet_NaN();
+				}
+			}
+		} else {
+			netOnZeroDXC_compute_cdiagram(correlation_diagram_data, p_value_diagram_fisher, loaded_sequences, index_a, index_b, window_basewidth, nr_window_widths, (apply_tau > 0)? true : false, apply_tau);
+		}
 
 		if (print_corr_diagram) {
 			if (write_to_file) {
@@ -143,6 +168,27 @@ int main(int argc, char *argv[]) {
 				exit(1);
 			}
 			exit(0);
+		}
+
+		if (invalid_sequences) {
+			if (write_to_file) {
+				error = netOnZeroDXC_save_single_file(p_value_diagram, selected_output_filename, separator_char);
+			} else {
+				int	l;
+				for (l = 0; l < nr_window_widths; l++) {
+					std::cout << p_value_diagram[l][0];
+					for (k = 1; k < p_value_diagram[l].size(); k++) {
+						std::cout << separator_char << p_value_diagram[l][k];
+					}
+					std::cout << "\n";
+				}
+			}
+			if (error) {
+				std::cerr << "ERROR: i/o error when writing data on file '" << selected_output_filename << "'. Please check permissions.\n";
+				exit(1);
+			}
+
+			return 0;
 		}
 
 		if (use_surrogate_generation) {
@@ -224,16 +270,38 @@ int main(int argc, char *argv[]) {
 	} else if (compute_wholesequence_xcorr) {
 		std::vector <double>	dummy_vector(loaded_sequences.size(), 0.0);
 		std::vector < std::vector <double> >	correlation_matrix_wholeseq(loaded_sequences.size(), dummy_vector);
+		std::vector <bool>	valid_sequences(loaded_sequences.size(), true);
+
 		int	i, j;
-		int	error = 0;
-		for (i = 0; i < loaded_sequences.size() - 1; i++) {
-			correlation_matrix_wholeseq[i][i] = 1.0;
-			for (j = i + 1; j < loaded_sequences.size(); j++) {
-				correlation_matrix_wholeseq[i][j] = netOnZeroDXC_compute_wholeseq_crosscorr(loaded_sequences, i, j, (apply_tau > 0)? true : false, apply_tau);
-				correlation_matrix_wholeseq[j][i] = correlation_matrix_wholeseq[i][j];
+		for (i = 0; i < loaded_sequences.size(); i++) {
+			for (j = 0; j < loaded_sequences[i].size(); j++) {
+				if (loaded_sequences[i][j] != loaded_sequences[i][j]) {
+					valid_sequences[i] = false;
+					break;
+				}
 			}
 		}
-		correlation_matrix_wholeseq[i][i] = 1.0;
+
+		int	error = 0;
+		for (i = 0; i < loaded_sequences.size() - 1; i++) {
+			if (valid_sequences[i])
+				correlation_matrix_wholeseq[i][i] = 1.0;
+			else
+				correlation_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
+			for (j = i + 1; j < loaded_sequences.size(); j++) {
+				if (valid_sequences[i] && valid_sequences[j]) {
+					correlation_matrix_wholeseq[i][j] = netOnZeroDXC_compute_wholeseq_crosscorr(loaded_sequences, i, j, (apply_tau > 0)? true : false, apply_tau);
+					correlation_matrix_wholeseq[j][i] = correlation_matrix_wholeseq[i][j];
+				} else {
+					correlation_matrix_wholeseq[i][j] = std::numeric_limits<double>::quiet_NaN();
+					correlation_matrix_wholeseq[j][i] = std::numeric_limits<double>::quiet_NaN();
+				}
+			}
+		}
+		if (valid_sequences[i])
+			correlation_matrix_wholeseq[i][i] = 1.0;
+		else
+			correlation_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
 
 		if (print_corr_diagram) {
 			if (write_to_file) {
@@ -261,8 +329,17 @@ int main(int argc, char *argv[]) {
 			std::vector <double>		fft_amplitudes_a, fft_amplitudes_b;
 
 			for (i = 0; i < loaded_sequences.size() - 1; i++) {
-				p_value_matrix_wholeseq[i][i] = 0.0;
+				if (valid_sequences[i])
+					p_value_matrix_wholeseq[i][i] = 0.0;
+				else
+					p_value_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
 				for (j = i + 1; j < loaded_sequences.size(); j++) {
+
+					if (!valid_sequences[i] || !valid_sequences[j]) {
+						p_value_matrix_wholeseq[i][j] = std::numeric_limits<double>::quiet_NaN();
+						p_value_matrix_wholeseq[j][i] = std::numeric_limits<double>::quiet_NaN();
+						continue;
+					}
 
 					netOnZeroDXC_initialize_surrogate_generation(values_distribution_a, fft_amplitudes_a, loaded_sequences, i);
 					netOnZeroDXC_initialize_surrogate_generation(values_distribution_b, fft_amplitudes_b, loaded_sequences, j);
@@ -317,19 +394,36 @@ int main(int argc, char *argv[]) {
 					p_value_matrix_wholeseq[j][i] = p_value_matrix_wholeseq[i][j];
 				}
 			}
+			if (valid_sequences[i])
+				p_value_matrix_wholeseq[i][i] = 0.0;
+			else
+				p_value_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
 		} else if (!use_surrogate_generation) {
 			int	i, j;
 			double	temp_cc2, temp_n, f_statistics;
 			for (i = 0; i < correlation_matrix_wholeseq.size() - 1; i++) {
+				if (valid_sequences[i])
+					p_value_matrix_wholeseq[i][i] = 0.0;
+				else
+					p_value_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
 				for (j = i + 1; j < correlation_matrix_wholeseq[i].size(); j++) {
-					temp_cc2 = correlation_matrix_wholeseq[i][j]*correlation_matrix_wholeseq[i][j];
-					temp_n = (double) (loaded_sequences[0].size() - ((apply_tau > 0)? apply_tau : 0));
-					f_statistics = 1.0 / (1.0/temp_cc2 - 1.0);
-					f_statistics *= temp_n;
-					p_value_matrix_wholeseq[i][j] = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1, temp_n - 2);
-					p_value_matrix_wholeseq[j][i] = p_value_matrix_wholeseq[i][j];
+					if (!valid_sequences[i] || !valid_sequences[j]) {
+						p_value_matrix_wholeseq[i][j] = std::numeric_limits<double>::quiet_NaN();
+						p_value_matrix_wholeseq[j][i] = std::numeric_limits<double>::quiet_NaN();
+					} else {
+						temp_cc2 = correlation_matrix_wholeseq[i][j]*correlation_matrix_wholeseq[i][j];
+						temp_n = (double) (loaded_sequences[0].size() - ((apply_tau > 0)? apply_tau : 0));
+						f_statistics = 1.0 / (1.0/temp_cc2 - 1.0);
+						f_statistics *= temp_n;
+						p_value_matrix_wholeseq[i][j] = netOnZeroDXC_cdf_f_distribution_Q(f_statistics, 1, temp_n - 2);
+						p_value_matrix_wholeseq[j][i] = p_value_matrix_wholeseq[i][j];
+					}
 				}
 			}
+			if (valid_sequences[i])
+				p_value_matrix_wholeseq[i][i] = 0.0;
+			else
+				p_value_matrix_wholeseq[i][i] = std::numeric_limits<double>::quiet_NaN();
 		}
 
 		if (write_to_file) {

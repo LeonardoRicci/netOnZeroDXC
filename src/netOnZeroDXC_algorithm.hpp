@@ -38,6 +38,8 @@ double netOnZeroDXC_compute_wholeseq_crosscorr (const std::vector < std::vector 
 double netOnZeroDXC_compute_crosscorr (const std::vector < std::vector <double> > &, int, int, int, int, int, int);
 int netOnZeroDXC_update_pdiagram (std::vector < std::vector <double> > &, const std::vector < std::vector <double> > &, const std::vector < std::vector <double> > &, int, int);
 void netOnZeroDXC_initialize_temp_diagram (std::vector < std::vector <double> > &, int, int);
+void netOnZeroDXC_initialize_nan_diagram(std::vector < std::vector <double> > &, int, int);
+void netOnZeroDXC_initialize_nan_efficiency(std::vector <double> &, int);
 
 int netOnZeroDXC_generate_surrogate_sequence (std::vector <double> &, const std::vector < std::vector <double> > &, int, const std::vector <double> &, const std::vector <double> &, double, unsigned int);
 int netOnZeroDXC_initialize_surrogate_generation (std::vector <double> &, std::vector <double> &, const std::vector < std::vector <double> > &, int);
